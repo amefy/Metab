@@ -1,0 +1,119 @@
+# Metab Language
+# Author: Amefy
+# Copyright (c) 2016 Amefy under license Apache-2.0
+# Language created with Jison, Copyright (c) 2009-2014 by Zachary Carter (https://github.com/zaach/jison) and based on Coffeescript, Copyright (c) 2009-2015 Jeremy Ashkenas (https://github.com/jashkenas/coffeescript)
+
+class Lexer
+	Tokens
+	L = 1
+	C = 1
+	s
+
+	ParseRules (str,rules) ->
+		Tokens = []
+		L = 1
+		C = 1
+		s = str
+
+		while s.length > 0			
+			size = 	rules()
+			
+			if size > 0
+				Advance size
+			else
+				Error 'Lexer: unexpected token in ['+s.substr(0, 30)+'...]'
+				break
+
+		AddToken 'EOF'
+		<- Tokens
+
+	
+
+	Advance (n) ->
+		i = 0
+		while i < n
+			if s[i] is '\n'
+				L++
+				C = 1
+			else
+				C++
+			i++
+		s = s.substr n
+
+	AddToken (type,val) ->		
+		if typeof type is 'string'
+			Tokens.push [type.toUpperCase(),val,{first_line:L-1,first_column:C-1,last_line:L-1,last_column:C-1}]				
+		else			
+			Tokens.push [type.T.toUpperCase(),type.V,{first_line:L-1,first_column:C-1,last_line:L-1,last_column:C+(type.V.length-1-1)}]
+
+	Error (m) ->		
+		throw L+":"+C+" ->"+m
+
+	AddTokenExp (ss,name,exp) ->
+		r = ParseExp ss, exp		
+		if r isnt null
+			AddToken {
+				T: name
+				V: r
+			}
+			
+			<- r.length
+		<- 0
+
+	AddTokenOne (ss,name,list) ->
+		r = ParseOne ss, list
+		if r isnt null
+			AddToken {
+				T: name
+				V: r
+			}
+			<- r.length
+		<- 0
+
+	AddTokenChar (ss,name,char) ->
+		if ParseChar(ss,char) is 1
+			AddToken {
+				T: name
+				V: char
+			}
+			<- 1
+		<- 0
+
+	AddTokenWord (ss,name,word) ->
+		r = ParseWord(ss,word)
+		if r isnt null
+			AddToken {
+				T: name
+				V: word
+			}
+			<- word.length
+		<- 0
+
+	ParseExp (ss,exp) ->
+		r = ss.match exp
+		if r isnt null
+			<- r[0]
+
+		<- null
+
+	ParseOne (ss,List) ->
+		for i in List
+			if ss.substr(0, i.length) is i
+				<- i
+		<- null
+
+	ParseChar (ss,c) ->
+		if ss[0] is c
+			<- 1
+		<- null
+
+	ParseWord (ss,c) ->
+		if ss.indexOf(c) is 0
+			<- c
+		<- null
+
+	get LastTokenType ->	
+		if Tokens.length > 0
+			<- Tokens[Tokens.length-1][0]
+		else
+			<- null

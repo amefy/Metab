@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+
+# Metab Language
+# Author: Amefy
+# Copyright (c) 2016 Amefy under license Apache-2.0
+# Language created with Jison, Copyright (c) 2009-2014 by Zachary Carter (https://github.com/zaach/jison) and based on Coffeescript, Copyright (c) 2009-2015 Jeremy Ashkenas (https://github.com/jashkenas/coffeescript)
+
+
+unless process.argv.length>2
+	console.info "\n Usage: metab {metab code file to run}\n"
+else
+	require './Metab'
+	process.argv.splice 1, 1
+	Metab.Import process.argv[1], ((res) ->	
+		console.info ''
+	), (e) ->
+		console.error('FATAL ERROR')
+		console.error(e)

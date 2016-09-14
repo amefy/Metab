@@ -1,0 +1,140 @@
+# Metab Language
+# Author: Amefy
+# Copyright (c) 2016 Amefy under license Apache-2.0
+# Language created with Jison, Copyright (c) 2009-2014 by Zachary Carter (https://github.com/zaach/jison) and based on Coffeescript, Copyright (c) 2009-2015 Jeremy Ashkenas (https://github.com/jashkenas/coffeescript)
+
+class MetabSourceMaps
+	const VlqCodes = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+	const VlqPositions = {A:0,B:1,C:2,D:3,E:4,F:5,G:6,H:7,I:8,J:9,K:10,L:11,M:12,N:13,O:14,P:15,Q:16,R:17,S:18,T:19,U:20,V:21,W:22,X:23,Y:24,Z:25,a:26,b:27,c:28,d:29,e:30,f:31,g:32,h:33,i:34,j:35,k:36,l:37,m:38,n:39,o:40,p:41,q:42,r:43,s:44,t:45,u:46,v:47,w:48,x:49,y:50,z:51,0:52,1:53,2:54,3:55,4:56,5:57,6:58,7:59,8:60,9:61,'+':62,'/':63}
+
+	CurrentLine
+	CurrentColumn
+	Mappings
+	NeedComma
+
+
+	StartSourceMap ->
+		CurrentLine = 1
+		CurrentColumn = 0
+		Mappings = ''
+		NeedComma = no
+
+
+	GetSourceMap (sourceFile,sourceCode,finalFile) ->
+		<- {
+			"version": 3
+			"sources": [sourceFile]
+			"names": []
+			"mappings": Mappings
+			"file": finalFile
+			"sourcesContent": [sourceCode]
+		}
+
+
+	ProcessMappings (mappings) ->		
+		c = 0
+		l = 0
+		lastc = 0
+		lastl = 0
+		for map in mappings			
+			if map.fromLine > 0
+				JumpLines map.fromLine
+				c = 0
+				l += map.fromLine
+
+			c += map.fromColumn or 0
+
+			
+
+			AddMapping map.first_column-lastc, map.first_line-lastl, 0, c
+			
+			lastc = map.first_column
+			lastl = map.first_line
+
+			c = 0						
+
+			if map.toLine > 0
+				JumpLines map.toLine
+				l +=map.toLine				
+			else
+				c += map.toColumn
+
+			
+	AddMapping (fromColumn,fromLine,fromFile,toColumn) ->
+		Mappings += ',' 	if NeedComma
+		Mappings += EncodeVlq(toColumn)+EncodeVlq(fromFile)+EncodeVlq(fromLine)+EncodeVlq(fromColumn)
+		NeedComma = yes	
+
+	JumpLines (count) ->
+		for i in [0...count]
+			Mappings += ';'
+		NeedComma = no
+
+	EncodeVlq (value) ->
+		answer = ''
+
+		signBit = value < 0? 1 : 0
+
+		valueToEncode = (Math.abs(value) << 1) + signBit
+
+		while valueToEncode or not answer
+			nextChunk = valueToEncode & 31
+			valueToEncode = valueToEncode >> 5
+			nextChunk |= 32 if valueToEncode
+			answer += VlqCodes[nextChunk]
+
+		<- answer
+
+	DecodeVlq (values) ->
+		res = []
+		len = values.length
+		shift = 0
+		value = 0
+
+		for i  in [0...len]
+			integer = VlqPositions[values[i]]
+
+			hasContinuationBit = integer & 32
+
+			integer &= 31
+			value += integer << shift
+
+			if hasContinuationBit
+				shift += 5
+			else
+				shouldNegate = value & 1
+				value >>= 1
+
+				res.push( shouldNegate ? -value : value )
+
+				value = shift = 0
+		
+		<- res
+
+	ConvertCodePosition (line,col) ->
+		lines = Mappings.split ';'
+
+		colres = 0
+		linres = 0
+		for l,,il in lines
+			if l.length > 0
+				maps = l.split ','			
+				c = 1			
+				if il > line
+					<- [linres+1,colres+1]
+
+				for m in maps
+					map = DecodeVlq m
+					c += map[0]
+					linres += map[2]
+					colres += map[3]
+
+					if il is (line - 1)
+						if c is col
+							<- [linres+1,colres+1]
+						else c > col
+							<- [linres+1,colres+1]
+
+
+		<- [line,col]
+

@@ -1,0 +1,513 @@
+# Metab Language
+# Author: Amefy
+# Copyright (c) 2016 Amefy under license Apache-2.0
+# Language created with Jison, Copyright (c) 2009-2014 by Zachary Carter (https://github.com/zaach/jison) and based on Coffeescript, Copyright (c) 2009-2015 Jeremy Ashkenas (https://github.com/jashkenas/coffeescript)
+
+class LexerMetab : Lexer
+	OpenStrings
+
+	ParseRules (str, rules) ->
+		res = super
+		res = RemoveComments res
+
+
+		#Insert EOL to end
+		if res.length > 1 and res[res.length-2][0] isnt 'EOL'			
+			eof = res.pop()
+			res.push ['EOL','\n',eof[2]]
+			res.push eof
+
+		res = RemoveEmptyLines res		
+
+		#Insert EOL to end
+		if res.length > 1 and res[res.length-2][0] isnt 'EOL'			
+			eof = res.pop()
+			res.push ['EOL','\n',eof[2]]
+			res.push eof
+			
+		#FindCalls TransformIndents res		
+		res = TransformIndents res		
+		res = RemoveInvalidCallins InlineFunctions res		
+		<- res
+		
+
+	Parse (ss) ->
+		OpenStrings = []
+		<- ParseRules ss, ->			
+			<- 	Spaces() or Indents() or Strings() or Comments() or RegularExpression() or Return() or MethodDefine() or Comma() or Groups() or Number() or If() or Booleans() or Reserved() or IncDecOperator() or LogicalOperator() or CompareOperator() or Assignament() or BinaryOperator() or ArithmeticPrecOperator() or ArithmeticOperator() or this.AddTokenWord(this.s, '...', '...') or this.AddTokenWord(this.s, '..', '..') or Indexes() or Tag() or Eol() or Await() or this.AddTokenChar(this.s, '?', '?') or this.AddTokenWord(this.s, '::', '::') or this.AddTokenChar(this.s, ':', ':') or this.AddTokenChar(this.s, ';', ';') or this.AddTokenChar(this.s, '!', '!') or this.AddTokenChar(this.s, '~', '~') or this.AddTokenChar(this.s, '}', '}') or this.AddTokenChar(this.s, '[', '[') or this.AddTokenChar(this.s, ']', ']') or this.AddTokenChar(this.s, '{', '{')					
+			
+	Spaces ->
+		if this.LastTokenType isnt 'INDENT' and this.LastTokenType isnt 'EOL' and (OpenStrings.length<=0 or OpenStrings[OpenStrings.length-1] isnt '#')
+			r = this.ParseExp this.s, /^[ \t]+/			
+			if r isnt null					
+				if this.LastTokenType in PRECALL
+
+					unary = this.ParseOne this.s.substr(r.length), ['+','-']
+					closeString = this.ParseOne this.s.substr(r.length), ['}']
+					
+					unless (unary isnt null and (this.s[unary.length+r.length] is ' ' or this.s[unary.length+r.length] is '\t')) or closeString isnt null
+						this.AddToken 'CALLIN','('
+				<- r.length
+		<- 0
+
+	Return ->
+		r = this.ParseOne this.s, RESERVED_RETURN	
+		if r isnt null
+			unless /^[a-zA-Z0-9_]+/.test(r) and ((r.length<this.s.length and /^[a-zA-Z0-9_]+/.test(this.s[r.length])) or this.LastTokenType is '.')
+				this.AddToken {
+					T: 'RETURN'
+					V: r
+				}
+				<- r.length
+		<- 0
+
+	MethodDefine ->
+		<- this.AddTokenOne this.s, '->', ['--->','-->','->','=>']
+
+	Eol ->				
+		if this.s[0] is '\n'		
+			if this.Tokens.length isnt 0 and this.LastTokenType isnt 'EOL'				
+				this.AddToken {
+					T: 'EOL'
+					V: '\n'
+				}
+			<- 1
+		else			
+			r = this.ParseExp this.s, /^[ \t]*[\n]+/			
+			if r isnt null				
+				<- r.length
+		<- 0
+
+	Indents ->
+		if this.LastTokenType is 'EOL'
+			<- this.AddTokenExp this.s, 'INDENT', /^[\t]+/
+		<- 0
+
+	Strings ->
+		if OpenStrings.length>0				
+			if OpenStrings[OpenStrings.length-1] is '#'				
+				r = this.ParseExp this.s, /^\s(?:[^\\"#]|\\[\s\S])*("|#[$a-zA-Z_]|#\{)/		# \t...   #{ | #TAG | "				
+			else				
+				r = this.ParseExp this.s, /^}(?:[^\\"#]|\\[\s\S])*("|#[$a-zA-Z_]|#\{)/		# }...   #{ | #TAG | "
+
+			if r isnt null								
+				if r[r.length-1] is '"'		
+					s='"'+r.substr 1
+					OpenStrings.pop()
+				else						
+					s='"'+r.substr(1, r.length-3)+'"'
+
+				if this.Tokens[this.Tokens.length-1][0] is 'CALLIN'
+					this.Tokens.pop()
+
+				this.AddToken {
+					T:')'	
+					V:')'
+				}
+				this.AddToken {
+					T:'+'	
+					V:'+'
+				}
+				this.AddToken {
+					T: 'STRING'
+					V: JoinStrings(s)
+				}
+
+				if r[r.length-1] isnt '"'					
+					this.AddToken {
+						T:'+'				
+						V:'+'
+					}
+					this.AddToken {
+						T:'('
+						V:'('
+					}
+					OpenStrings[OpenStrings.length-1] = r[r.length-1] is '{' ? '#{' : '#'				
+
+				<- r.length+(r[r.length-1] is '{' or r[r.length-1] is '"' ? 0 : -1)
+
+		else			
+			r = this.ParseExp this.s, /^"(?:[^\\"#]|\\[\s\S])*\#([$a-zA-Z_]|\{)/		# "...#  TAG|{
+			if r isnt null						
+				#LOG r
+				s=r.substr(0, r.length-2)+'"'
+				this.AddToken {
+					T: 'STRING'
+					V: JoinStrings(s)
+				}
+				this.AddToken {
+					T:'+'
+					V:'+'
+				}
+				this.AddToken {
+					T:'('
+					V:'('
+				}
+				OpenStrings.push '#'+( r[r.length-1] is '{' ? '{' : '')
+				<- r.length+(r[r.length-1] is '{' ? 0 : -1)
+
+		r = this.ParseExp this.s, /^'(?:[^\\']|\\[\s\S])*'/		
+		if r isnt null			
+			this.AddToken {
+				T: 'STRING'
+				V: JoinStrings(r)
+			}
+			<- r.length
+
+		r = this.ParseExp this.s, /^"(?:[^\\"#]|\\[\s\S]|\#(?!\{))*"/	
+		if r isnt null			
+			this.AddToken {
+				T: 'STRING'
+				V: JoinStrings(r)
+			}
+			<- r.length
+
+		r = this.ParseExp this.s, /^`[^`]*`/
+		if r isnt null			
+			this.AddToken {
+				T: 'STRING'
+				V: JoinStrings(r)
+			}
+			<- r.length
+
+		<- 0
+
+	Comments ->
+		r = this.ParseExp this.s, /^###([^#][\s\S]*?)(?:###[^\n\S]*|###$)|^(?:\s*#(?!##[^#]).*)+/
+		if r isnt null
+			#this.AddToken 
+			#	T: 'multi_comment'
+			#	V: r
+			
+			<- r.length
+
+		if this.s[0] is '#'
+			i = 1
+			while this.s[i] isnt '\n' and this.s.length > i
+				i++
+			<- i
+
+		<- 0 
+
+	JoinStrings (s) ->		
+		while r = s.match /\n[\t]*/
+			s = s.replace r[0], ' '
+		<- s
+
+	RegularExpression ->
+		r = this.ParseExp this.s, /^\/(?!\/)((?:[^[\/\n\\]|\\[^\n]|\[(?:\\[^\n]|[^\]\n\\])*\])*)(\/)?/
+		if r isnt null
+			if r.indexOf('\n') isnt -1 or r[r.length-1] isnt '/' or r[r.length-2] is ' ' or r[1] is ' ' or r.indexOf('/= ') is 0
+				<- 0
+
+			rp = this.s.substr([r.length]).match /^[gmi]{1,3}/
+			if rp isnt null
+				r += rp
+
+			this.AddToken {
+				T: 'REGEXP'
+				V: r
+			}
+			
+			<- r.length
+		<- 0
+
+	Number ->
+		<- this.AddTokenExp this.s, 'NUMBER', /^(Infinity|(0x[0-9a-fA-F]+)|(0o[0-7]+)|(0b[0-1]+)|(0B[0-1]+)|((([0-9]+(\.[0-9]+)*)|((\.[0-9]+)+))([eE]+(-)*[0-9]+)*))/		
+
+	Comma ->
+		<- this.AddTokenChar this.s, ',', ','		
+
+	Groups ->
+		if this.s[0] is '('
+			this.AddToken '(', '('
+			<- 1
+		else this.s[0] is ')'
+			this.AddToken ')',')'
+			<- 1
+		<- 0
+
+	Assignament ->		
+		r = this.ParseOne this.s, ASSIGNAMENTS	
+		if r isnt null		
+			this.AddToken {
+				T: (r is '=' ? '=' : 'ASSIGN_OP')
+				V: r
+			}
+			<- r.length
+		<- 0	
+
+	If ->
+		r = this.ParseOne this.s, ['if','unless']	
+		if r isnt null	
+			this.AddToken {
+				T: 'IF'
+				V: r
+			}
+			<- r.length
+		<- 0	
+
+	Reserved ->
+		r = this.ParseOne this.s, RESERVED_WORDS	
+		if r isnt null			
+			unless /^[a-zA-Z0-9_]+/.test(r) and ((r.length<this.s.length and /^[a-zA-Z0-9_]+/.test(this.s[r.length])) or this.LastTokenType is '.')
+				this.AddToken {
+					T: r.toUpperCase()
+					V: r
+				}
+				<- r.length
+		<- 0
+
+	IncDecOperator ->
+		<- this.AddTokenOne this.s, '+-', INCRE_DECRE_OPERATORS				
+
+	ArithmeticOperator ->			
+		r = this.ParseOne this.s, ARITHMETIC_OPERATORS	
+		if r isnt null		
+			this.AddToken {
+				T: (r is '+' or r is '-' ? r : 'ARITHMETIC')
+				V: r
+			}
+			<- r.length
+		<- 0	
+
+	ArithmeticPrecOperator ->
+		<- this.AddTokenOne this.s, 'ARITHMETIC_PREC', ARITHMETIC_PREC_OPERATORS		
+
+	LogicalOperator ->		
+		r = this.ParseOne this.s, LOGICAL_OPERATORS	
+		if r isnt null
+			unless /^[a-zA-Z0-9_]+/.test(r) and ((r.length<this.s.length and /^[a-zA-Z0-9_]+/.test(this.s[r.length])) or this.LastTokenType is '.')
+				this.AddToken {
+					T: 'LOGICAL'
+					V: (r is 'and' ? '&&' : (r is 'or' ? '||' : r))
+				}
+				<- r.length
+		<- 0
+
+	CompareOperator ->		
+		r = this.ParseOne this.s, COMPARE_OPERATORS			
+		if r isnt null	
+			if (r[0] is '<' or r[0] is '>') and (this.ParseOne(this.s, ASSIGNAMENTS) or this.ParseOne(this.s, BINARY_OPERATORS))
+				<- 0
+			unless /^[a-zA-Z0-9_]+/.test(r) and ((r.length<this.s.length and /^[a-zA-Z0-9_]+/.test(this.s[r.length])) or this.LastTokenType is '.')
+				this.AddToken {
+					T: 'COMPARE'
+					V: (r is 'is' ? '===' : (r is 'isnt' ? '!==' : r))
+				}
+				<- r.length
+		<- 0
+
+	BinaryOperator ->		
+		<- this.AddTokenOne this.s, 'BINARY_OP', BINARY_OPERATORS
+
+	Booleans ->		
+		r = this.ParseOne this.s, RESERVED_BOOL	
+		if r isnt null
+			unless /^[a-zA-Z0-9_]+/.test(r) and ((r.length<this.s.length and /^[a-zA-Z0-9_]+/.test(this.s[r.length])) or this.LastTokenType is '.')
+				this.AddToken {
+					T: 'BOOLEAN'
+					V: r
+				}
+				<- r.length
+		<- 0
+
+	Tag ->		
+		size = this.AddTokenExp this.s, 'TAG', /^[$a-zA-Z_]+[$a-zA-Z0-9_]*/
+		<- size
+
+	Await ->		
+		if this.s[0] is '@'
+			this.AddToken {
+				T: 'AWAIT'
+				V: '@'
+			}
+			<- 1
+		<- 0
+
+	Indexes (tokens) ->
+		if this.s[0] is '['
+			this.AddToken '[','['
+			<- 1
+		else this.s[0] is ']'
+			this.AddToken ']',']'
+			<- 1
+		else this.s[0] is '.'
+			this.AddToken '.','.'			
+			<- 1
+		<- 0
+
+	RemoveComments (tokens) ->
+		res = []
+		for i in tokens
+			unless i[0] is 'MULTI_COMMENT' or i[0] is 'SINGLE_COMMENT'
+				res.push i
+		<- res
+
+	RemoveEmptyLines (tokens) ->
+		res = []
+		LastLine = []
+		LastLineContent = no
+		for t,i in tokens
+			if t[0] is 'EOL' 
+				if LastLineContent
+					res = res.concat LastLine
+					res.push t
+				LastLine = []
+				LastLineContent = no
+			else 
+				if t[0] isnt 'INDENT'
+					LastLineContent = yes
+				LastLine.push t
+
+		res = res.concat LastLine 		if LastLineContent
+		<- res
+
+	TransformIndents (tokens) ->		
+		res = []
+		indent = 0
+		ContinueIndent = no
+		for t,i in tokens
+			if t[0] is 'INDENT'
+				if t[1].length is indent+1					
+					res.push ['INDENT','{\n',t[2]]
+					indent++
+				else t[1].length > indent+1
+					Error 'unexpected indent', t
+				else t[1].length is indent					
+					continue
+				else
+					while t[1].length < indent						
+						res.push ['OUTDENT','\n}',t[2]]
+						res.push ['EOL','\n',t[2]]
+						indent--
+			else				
+				if i>0 and tokens[i-1][0] is 'EOL' and indent > 0
+					while indent > 0							
+						res.push ['OUTDENT','\n}',t[2]]
+						res.push ['EOL','\n',t[2]]
+						indent--
+					
+
+				res.push t
+
+		<- TransformIndentsEols res
+
+	TransformIndentsEols (tokens) ->
+		res = []
+		for t,i in tokens			
+			if t[0] is 'EOL' and tokens[parseInt(i)+1][0] is 'INDENT'
+				continue
+
+			res.push t
+		<- res
+
+	RemoveInvalidCallins (tokens) ->
+		res = []
+
+		for t,i in tokens		
+			i = parseInt(i)
+			if t[0] is 'CALLIN'
+				if tokens[i+1][0] in CALLIN_NEXT
+					if tokens[i+1][0] is '->' and tokens[i-1][0] is ')'						
+						j = i-2						
+						while tokens[j][0] isnt '(' and j>0
+							j--
+						if j>1 and tokens[j-1][0] in PRECALL
+							res.push t
+					else
+						res.push t
+			else
+				res.push t
+		<- res
+
+	InlineFunctions (tokens) ->
+		w=''
+		for t in tokens
+			w += t[0]+'^'+t[1]+' '
+
+		res = []
+		hasInlineFunction = no
+		for t,i in tokens
+			i=parseInt(i)			
+			if hasInlineFunction and t[0] is 'EOL'
+				res.push ['EOL','\n',t[2]]
+				res.push ['OUTDENT','\n}',t[2]]
+				hasInlineFunction = no
+			
+			res.push t
+
+			if t[0] is '->' and tokens[i+1][0] isnt 'INDENT'
+				hasInlineFunction = yes
+				res.push ['INDENT','{\n',t[2]]
+
+		if hasInlineFunction
+			res.push ['EOL','\n',res[res.length-1][2]]
+			res.push ['OUTDENT','\n}',res[res.length-1][2]]
+		
+
+		w=''
+		for t in res
+			w += t[0]+'^'+t[1]+' '
+
+		<- res
+
+	RemoveEols (tokens) ->
+		res = []
+		for i in tokens
+			res.push i 		if i[0] isnt 'EOL'
+		<- res
+
+	FindCalls (tokens) ->
+		res = []
+		calls = []
+		
+		for t,i in tokens			
+			if t[0] in PRECALL and tokens[i+1][0] is 'SPACE' and (tokens[i+2][0] in CALLIN_NEXT2)
+				res.push t
+				res.push ['(','(',tokens[i+1][2]]
+				calls.push yes
+				tokens[i+1][1] = no
+			else t[0] is 'SPACE'
+				void 0
+			else
+				if t[0] is 'EOL' or t[0] is 'IF' or t[0] is 'UNLESS'
+					while calls.length > 0
+						res.push [')',')',t[2]]
+						calls.pop()					
+
+				res.push t
+		<- res
+
+	
+	const RESERVED_BOOL = ['true','false','yes','no']
+	const RESERVED_RETURN = ['return','<-']	
+	const RESERVED_WORDS = ['null','undefined','this','await',
+		'let','const',
+		'new', 'delete', 
+		'throw', 'break', 'continue', 'debugger'
+		'if', 'else','unless', 'switch','case', 'for', 'while', 'try', 'catch', 'finally'
+		'class', 'super','default','do'
+		'loop','with'
+		'import','export'
+		'let','var','static','void',
+		'NaN','Infinity','typeof','instanceof','in','by',
+		'enum',
+		'public','private','protected','get','set','not'
+		'as'
+	]
+
+	const ASSIGNAMENTS 				= ['=','-=', '+=', '/=', '*=', '%=', '|=', '&=', '<<=', '>>>=', '>>=', '^=','**=']
+	const BINARY_OPERATORS 			= ['|','&','^','>>>','>>','<<']
+	const LOGICAL_OPERATORS 		= ['&&','||','and','or']
+	const COMPARE_OPERATORS 		= ['===','!==','==','!=','>=','<=','>','<','isnt','is']
+	const ARITHMETIC_OPERATORS 		= ['+','-']
+	const ARITHMETIC_PREC_OPERATORS = ['/','**','*','%']
+	const INCRE_DECRE_OPERATORS 	= ['++','--']
+
+	const SIMPLE_STRING				= /^[^\\']*(?:\\.[^\\']*)*'/
+	const DOUBLE_STRING 	 		= /^[^\\"]*(?:\\.[^\\"]*)*"/	
+
+	const PRECALL 					= ['TAG',')',']','THIS','SUPER']
+	const CALLIN_NEXT2				= ['[','(','THIS','NUMBER','STRING']
+	const CALLIN_NEXT 				= ['(','TAG','THIS','NUMBER','UNDEFINED','NULL','NAN','STRING','INFINITY','REGEXP','{','[','BOOLEAN','+','-','+-','->','AWAIT','NEW']

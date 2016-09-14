@@ -1,0 +1,480 @@
+# Metab Language
+# Author: Amefy
+# Copyright (c) 2016 Amefy under license Apache-2.0
+# Language created with Jison, Copyright (c) 2009-2014 by Zachary Carter (https://github.com/zaach/jison) and based on Coffeescript, Copyright (c) 2009-2015 Jeremy Ashkenas (https://github.com/jashkenas/coffeescript)
+
+Parser = (require 'jison').Parser
+
+unwrap = /^\(\)\s*=>\s*{\s*return\s*([\s\S]*);\s*\}/
+
+o = (rule,action,prec) ->	
+	if action		
+		res = unwrap.exec action
+		if res
+			res = res[1]
+		else
+			res = "(#action )(this)"
+		
+		res = res.replace /\bnew {1}/g, '$&yy.'				
+		res = res.replace /\bConcat/g, 'yy.$&'
+		res = res.replace /\LocN/g, '@'	
+		res = res.replace /\Loc/g, '@$'	
+		res = '$$='+res
+	else
+		res = '$$=$1'
+
+	<- [rule,res,prec]
+
+grammar =
+	Start: [
+		o 'EOF',										-> <- new Document []		
+		o 'Body EOF',									-> <- new Document $1
+	]
+
+	Body: [		
+		o 'Line',										-> <- [$1]
+		o 'Body Eol Line',								-> <- Concat $1, [$3]
+		o 'Body Eol'
+	]
+
+	Block: [
+		o 'INDENT OUTDENT',								-> <- new Block [], yes, [LocN1,LocN2]		
+		o 'INDENT Body OUTDENT',						-> <- new Block $2, yes, [LocN1,LocN3]
+	]
+
+	EmptyBlock: [
+		o 'Block'
+		o 'Eol',											-> <- new Block [], yes, [LocN1,LocN1]
+	]
+
+	OptBlock: [
+		o 'Block'
+		o '',												-> <- new Block [], yes, [Loc,Loc]
+	]
+
+	Line: [
+		o 'Statement'
+		o 'Exp'
+		o 'EXPORT Exp',										-> <- new Export $2, null, LocN1
+		o 'EXPORT TAG ( Exp )',								-> <- new Export $4, $2, LocN1
+		o 'EXPORT DEFAULT Exp',								-> <- new Export $3, $2, LocN1
+	]
+
+	Import: [
+		o 'IMPORT STRING',									-> <- new Import $2, null, Loc
+		o 'IMPORT ImportVars ( STRING )',					-> <- new Import $4, $2, Loc
+	]
+
+	ImportVars: [
+		o 'TAG',											-> <- [[$1]]
+		o 'TAG AS TAG',										-> <- [[$1,$3]]
+		o 'ImportVars , TAG',								-> <- Concat $1, [[$3]]
+		o 'ImportVars , TAG AS TAG',						-> <- Concat $1, [[$3,$5]]
+	]
+
+	Statement: [
+		o 'CONTINUE',									-> <- new Continue Loc
+		o 'BREAK',										-> <- new Break Loc
+		o 'RETURN',										-> <- new Return null, Loc
+		o 'RETURN Exp',									-> <- new Return $2, LocN1
+		o 'DEBUGGER',									-> <- new Reserved 'debugger;', Loc
+		o 'THROW Exp',									-> <- new Throw $2, LocN1		
+		o 'With'		
+		o 'If'		
+		o 'Exp IF Exp',									-> blockRange = JSON.parse JSON.stringify [LocN2,LocN3]; blockRange[0].toColumn = blockRange[1].toColumn = 0; <- new If ($2 is 'if'),	$3, (new Block [$1], no, blockRange) 						,	null, LocN2
+		o 'CONTINUE IF Exp',							-> blockRange = JSON.parse JSON.stringify [LocN2,LocN3]; blockRange[0].toColumn = blockRange[1].toColumn = 0; <- new If ($2 is 'if'),	$3, (new Block [new Continue(LocN1)], no, blockRange)		,	null, LocN2
+		o 'BREAK IF Exp',								-> blockRange = JSON.parse JSON.stringify [LocN2,LocN3]; blockRange[0].toColumn = blockRange[1].toColumn = 0; <- new If ($2 is 'if'),	$3, (new Block [new Break(LocN1)], no, blockRange)			,	null, LocN2
+		o 'RETURN IF Exp',								-> blockRange = JSON.parse JSON.stringify [LocN2,LocN3]; blockRange[0].toColumn = blockRange[1].toColumn = 0; <- new If ($2 is 'if'),	$3, (new Block [new Return(null,LocN1)], no, blockRange)	,	null, LocN2
+		o 'RETURN Exp IF Exp',							-> blockRange = JSON.parse JSON.stringify [LocN3,LocN4]; blockRange[0].toColumn = blockRange[1].toColumn = 0; <- new If ($3 is 'if'),	$4, (new Block [new Return($2,LocN1)], no, blockRange)		,	null, LocN3
+		o 'THROW Exp IF Exp',							-> blockRange = JSON.parse JSON.stringify [LocN3,LocN4]; blockRange[0].toColumn = blockRange[1].toColumn = 0; <- new If ($3 is 'if'),	$4, (new Block [new Throw($2,LocN1)], no, blockRange)		,	null, LocN3
+		o 'Loop'		
+		o 'Switch'
+		o 'Try'
+		o 'Class'
+		o 'EXPORT Class',								-> <- new Export $2, null, LocN1
+		o 'EXPORT TAG Class',							-> <- new Export $3, $2, LocN1
+		o 'EXPORT DEFAULT Class',						-> <- new Export $3, $2, LocN1
+		o 'Import'
+	]
+
+	Exp: [		
+		o 'Object'		
+		o 'TAG',											(-> 
+			<- new Tag $1,Loc
+		), {prec: 'LOW'}
+		o 'THIS',											-> <- new This $1, Loc
+		o 'Super'
+		o 'Value'
+		o 'Array'
+		o 'NEW Exp',										-> <- new New $2, LocN1
+		o 'Call'
+		o 'AWAIT Exp',										-> <- new Await $2, LocN1
+		o 'Function'
+		o 'Operation'
+		o 'Exp ? Exp : Exp',								-> <- new InlineIf $1, $3, $5, [LocN2,LocN4]
+		o 'Exp ?',											-> <- new Exist $1, LocN2
+		o '( Exp )',										-> <- new Paren $2, [LocN1,LocN3]
+		o '( TAG )',										-> <- new Paren (new Tag $2,LocN2), [LocN1,LocN3]
+		o 'Exp . Exp',										-> <- new Property $1, $3, LocN2
+		o 'Exp [ Exp ]',									-> <- new Index $1, $3, [LocN2,LocN4]
+		o 'Exp = Exp',										-> <- new Assignament $1, (new Op $2,LocN2), $3
+		o 'Exp ASSIGN_OP Exp',								-> <- new Assignament $1, (new Op $2,LocN2), $3
+	]
+
+	Operation: [
+		o 'Exp +-',											-> <- new Operation $1, (new Op $2,LocN2)
+		o '+- Exp',											-> <- new Operation (new Op $1,LocN1), $2
+		o '+ Exp',											(-> 
+			<-													new Operation (new Op $1,LocN1), $2
+		), {prec: '+-'}
+		o '- Exp',											(-> 
+			<-													new Operation (new Op $1,LocN1), $2
+		), {prec: '+-'}
+		o '~ Exp',											-> <- new Operation (new Op $1,LocN1), $2
+		o 'DELETE Exp',										-> <- new Operation (new Op $1,LocN1), $2
+		o 'VOID Exp',										-> <- new Operation (new Op $1,LocN1), $2
+		o 'TYPEOF Exp',										-> <- new Operation (new Op $1,LocN1), $2
+		o 'NOT Exp',										-> <- new Operation (new Op '!',LocN1), $2
+		o 'Exp ARITHMETIC_PREC Exp',						-> <- new Operation $1, (new Op $2,LocN2), $3
+		o 'Exp + Exp',										-> <- new Operation $1, (new Op $2,LocN2), $3
+		o 'Exp - Exp',										-> <- new Operation $1, (new Op $2,LocN2), $3
+		o 'Exp INSTANCEOF Exp',								-> <- new Operation $1, (new Op $2,LocN2), $3
+		o 'Exp LOGICAL Exp',								-> <- new Operation $1, (new Op $2,LocN2), $3
+		o 'Exp BINARY_OP Exp',								-> <- new Operation $1, (new Op $2,LocN2), $3
+		o 'Exp COMPARE Exp',								-> <- new Operation $1, (new Op $2,LocN2), $3
+		o 'Exp IN Exp',										-> <- new In $1, $3, LocN2
+	]
+
+	Function: [		
+		o '-> Block',										-> <- new Function null,null,($1 is '-->'),($1 is '--->'),$2,LocN1
+		o '( ) -> Block',									-> <- new Function null,null,($3 is '-->'),($3 is '--->'),$4,LocN3
+		o '( ) ( -> Block )',								-> <- new Function null,null,($4 is '-->'),($4 is '--->'),$5,LocN4
+		o '( TAG ) -> Block',								-> <- new Function null,[new FunctionParam $2,null,LocN2],($4 is '-->'),($4 is '--->'),$5,LocN4
+		o '( TAG ) ( -> Block )',							-> <- new Function null,[new FunctionParam $2,null,LocN2],($5 is '-->'),($5 is '--->'),$6,LocN5
+		o '( TAG = FuncDefValue ) -> Block',				-> <- new Function null,[new FunctionParam $2,$4,[LocN2,LocN3]],($6 is '-->'),($6 is '--->'),$7,LocN6
+		o '( TAG = FuncDefValue ) ( -> Block )',			-> <- new Function null,[new FunctionParam $2,$4,[LocN2,LocN3]],($7 is '-->'),($7 is '--->'),$8,LocN7
+		o '( FuncArgs ) -> Block',							-> <- new Function null,$2,($4 is '-->'),($4 is '--->'),$5,LocN4
+		o '( FuncArgs ) ( -> Block )',						-> <- new Function null,$2,($5 is '-->'),($5 is '--->'),$6,LocN5
+	]
+
+	FuncArgs: [
+		o 'TAG , TAG',										(-> 
+			<-													[(new FunctionParam $1,null,LocN1),(new FunctionParam $3,null,[LocN2,LocN3])]
+		), {prec: ','}
+		o 'TAG = FuncDefValue , TAG',						(-> 
+			<-													[(new FunctionParam $1,$3,[LocN1,LocN2]),(new FunctionParam $5,null,[LocN4,LocN5])]
+		), {prec: ','}
+		o 'TAG , TAG = FuncDefValue',						(-> 
+			<-													[(new FunctionParam $1,null,LocN1),(new FunctionParam $3,$5,[LocN2,LocN3,LocN4])]
+		), {prec: ','}
+		o 'TAG = FuncDefValue , TAG = FuncDefValue',		(-> 
+			<-													[(new FunctionParam $1,$3,[LocN1,LocN2]),(new FunctionParam $5,$7,[LocN4,LocN5,LocN6])]
+		), {prec: ','}
+		o 'FuncArgs , TAG',									-> <- Concat $1,[new FunctionParam $3,null,[LocN2,LocN3]]
+		o 'FuncArgs , TAG = FuncDefValue',					-> <- Concat $1,[new FunctionParam $3,$5,[LocN2,LocN3,LocN4]]		
+	]
+
+	FuncDefValue : [
+		o 'Object'
+		o 'Value'
+		o '- Value',										-> <- new Operation (new Op $1,LocN1), $2
+		o '+ Value',										-> <- new Operation (new Op $1,LocN1), $2
+		o 'Array'
+	]
+
+	Class: [
+		o 'CLASS TAG',									-> <- new Class (new Tag $2,LocN2), null, null, 				[LocN1]
+		o 'CLASS TAG : TAG',							-> <- new Class (new Tag $2,LocN2), (new Tag $4,LocN4), null, 	[LocN1,LocN3]
+		o 'CLASS TAG INDENT ClassBody OUTDENT',			-> <- new Class (new Tag $2,LocN2), null,$4, 					[LocN1,null,LocN3,LocN5]
+		o 'CLASS TAG : TAG INDENT ClassBody OUTDENT',	-> <- new Class (new Tag $2,LocN2),(new Tag $4,LocN4),$6, 		[LocN1,LocN3,LocN5,LocN7]
+	]
+
+	ClassBody: [
+		o 'ClassProperties'
+		o 'ClassBody ClassProperties',						-> <- Concat $1, $2
+	]
+
+	ClassProperties: [
+		o 'ClassProperty'
+		o 'STATIC ClassProperty',							-> 
+			for i in $2 
+				i.Static = yes
+			<- $2
+		o 'Access ClassProperty',							-> 
+			for i in $2 
+				i.Access = $1 
+			<- $2
+		o 'Access STATIC ClassProperty',					-> 
+			for i in $2 
+				i.Access = $1 
+				i.Static = yes 
+			<- $3
+	]
+
+	ClassProperty: [
+		o 'Enum Eol',										-> <- [$1]
+		o 'Const Eol'
+		o 'Var Eol'
+		o 'TAG Function Eol',								-> $2.Name = new Tag $1,LocN1; <- [$2]
+		o 'TAG ( Function ) Eol',							-> $3.Name = new Tag $1,LocN1; <- [$3]		
+		o 'Getter TAG Function Eol',						-> $3.Name = new Tag $2,LocN2; $3.Getter = $1; $3.GetterL = LocN1; <- [$3]
+		o 'Getter TAG ( Function ) Eol',					-> $4.Name = new Tag $2,LocN2; $4.Getter = $1; $4.GetterL = LocN1; <- [$4]
+	]
+
+	Access: [
+		o 'PUBLIC'
+		o 'PROTECTED'
+		o 'PRIVATE'
+	]
+
+	Getter: [
+		o 'GET'
+		o 'SET'
+	]
+
+	Enum: [
+		o 'ENUM TAG ( EnumValues )',						-> <- new Enum (new Tag $2,LocN2),$4,[LocN3,LocN5]
+	]
+
+	EnumValues: [
+		o 'TAG',											-> <- [new EnumValue (new Tag $1,Loc), null, Loc]
+		o 'TAG = Value',									-> <- [new EnumValue (new Tag $1,LocN1), $3, [LocN1,LocN2]]
+		o 'EnumValues , TAG',								-> <- Concat $1, [new EnumValue (new Tag $3,LocN3), null, [LocN3,null,LocN2]]
+		o 'EnumValues , TAG = Value',						-> <- Concat $1, [new EnumValue (new Tag $3,LocN3), $5, [LocN3,LocN4,LocN2]]
+	]
+
+	Const: [
+		#o 'CONST TAG = Exp', 								-> <- new Const (new Tag $2), $4
+		o 'CONST ConstVar',									-> <- $2
+	]
+
+	ConstVar: [
+		o 'TAG = Exp',										-> <- [new Const (new Tag $1,LocN1),$3,LocN2]
+		o 'ConstVar , TAG = Exp',							-> <- Concat $1, [new Const (new Tag $3,LocN3), $5, [LocN2,LocN4]]
+	]
+
+	Var: [
+		o 'TAG',											-> <- [new Var (new Tag $1,Loc)]
+		o 'TAG = Exp',										-> <- [new Var (new Tag $1,LocN1),$3,LocN2]
+		o 'Var , TAG',										-> <- Concat $1, [new Var (new Tag $3,LocN3), null, LocN2]
+		o 'Var , TAG = Exp',								-> <- Concat $1, [new Var (new Tag $3,LocN3), $5, [LocN2,LocN4]]
+	]
+
+	If: [
+		o 'IF Exp Block Else',								-> $3.Inline  = no; <- new If ($1 is 'if'),$2,$3,$4,LocN1
+	]
+
+	Else: [
+		o '',												-> null
+		o 'ELSE Block',										-> $2.Inline = no; <- new Else $2, LocN1
+		o 'ELSE If',										-> 
+			blockRange = JSON.parse JSON.stringify [LocN1,LocN2]
+			blockRange[0].toColumn = blockRange[1].toColumn = 0	
+			<- new Else (new Block [$2], no, blockRange), LocN1
+		o 'Elses ELSE Block',								-> $3.Inline = no; $1.Next.Else = new Else $3,LocN2; $1.Next = $1.Next.Else.Body.Body[0]; <- $1
+		o 'Elses ELSE If',									-> 
+			blockRange = JSON.parse JSON.stringify [LocN2,LocN3]
+			blockRange[0].toColumn = blockRange[1].toColumn = 0	
+			$1.Next.Else = new Else (new Block [$3], no, blockRange),LocN2
+			$1.Next = $1.Next.Else.Body.Body[0]
+			<- $1
+		o 'Elses'
+	]
+
+
+	Elses: [		
+		o 'ELSE Exp Block',									-> 
+			$3.Inline  = no
+			blockRange = JSON.parse JSON.stringify [LocN2,LocN3]
+			blockRange[0].toColumn = blockRange[1].toColumn = 0			
+			e = new Else (new Block [(new If yes, $2, $3,null,JSON.parse JSON.stringify LocN2)], no, blockRange), LocN1
+			e.Next = e.Body.Body[0]
+			<- e
+		o 'Elses ELSE Exp Block',							-> 
+			$4.Inline = no
+			blockRange = JSON.parse JSON.stringify [LocN3,LocN4]
+			blockRange[0].toColumn = blockRange[1].toColumn = 0	
+			$1.Next.Else = new Else (new Block [(new If yes, $3, $4,null,JSON.parse JSON.stringify LocN3)], no, blockRange), LocN2
+			$1.Next = $1.Next.Else.Body.Body[0]
+			<- $1
+	]
+
+	Loop: [
+		o 'DO Block Eol WHILE Exp',							-> <- new Do $2, $5, [LocN1,LocN4]
+		o 'WHILE Exp Block',								-> <- new While $2, $3, LocN1
+		o 'FOR TAG IN Exp Block',							-> <- new For (new Tag $2,LocN2),null,null,$4,$5,LocN1
+		o 'FOR TAG , TAG IN Exp Block',						-> <- new For (new Tag $2,LocN2),(new Tag $4,LocN4),null,$6,$7,LocN1
+		o 'FOR TAG , TAG , TAG IN Exp Block',				-> <- new For (new Tag $2,LocN2),(new Tag $4,LocN4),(new Tag $6,LocN6),$8,$9,LocN1
+		o 'FOR , TAG , TAG IN Exp Block',					-> <- new For null,(new Tag $3,LocN3),(new Tag $5,LocN5),$7,$8,LocN1
+		o 'FOR , , TAG IN Exp Block',						-> <- new For null,null,(new Tag $4,LocN4),$6,$7,LocN1
+		o 'FOR TAG , , TAG IN Exp Block',					-> <- new For (new Tag $2,LocN2),null,(new Tag $5,LocN5),$7,$8,LocN1
+		o 'FOR , TAG IN Exp Block',							-> <- new For null,(new Tag $3,LocN3),null,$5,$6,LocN1
+		o 'FOR LoopRange Block',							-> <- new ForRange $2[0],$2[1],$2[2],$2[3],(new Number '1'),$3,LocN1
+		o 'FOR LoopRange BY Exp Block',						-> <- new ForRange $2[0],$2[1],$2[2],$2[3],$4,$5,LocN1
+	]
+
+	LoopRange: [
+		o 'TAG IN [ Exp .. Exp ]',							-> <- [(new Tag $1,LocN1),yes,$4,$6]
+		o 'TAG IN [ Exp ... Exp ]',							-> <- [(new Tag $1,LocN1),no ,$4,$6]
+		o '[ Exp .. Exp ]',									-> <- [null,yes,$2,$4]
+		o '[ Exp ... Exp ]',								-> <- [null,no,$2,$4]
+	]
+
+	Switch: [
+		o 'SWITCH Exp INDENT SwitchBody OUTDENT',			-> <- new Switch $2, $4, [LocN1,LocN3,LocN5]
+	]
+
+	SwitchBody: [	
+		o 'SwitchCases Eol'		
+		o 'DefaultCase Eol'
+		o 'SwitchCases ELSE Block Eol',						-> <- Concat $1, [[$3]]
+		o 'SwitchCases ELSE Eol'#,							-> $1
+		o 'SwitchCases Eol DEFAULT Block Eol',				-> <- Concat $1, [[$4]]
+		o 'SwitchCases Eol DEFAULT Eol'#,					-> $1
+
+	]
+
+	SwitchCases: [
+		o 'SwitchCase'
+		o 'SwitchCases Eol CASE CaseOption Block',			-> <- Concat $1, [[$4,$5]]
+		o 'SwitchCases Eol CASE CaseOption'#,				-> <- $1
+		o 'SwitchCases Eol CaseOption Block',				-> <- Concat $1, [[$3,$4]]
+		o 'SwitchCases Eol CaseOption'#,						-> <- $1
+	]
+
+	SwitchCase: [		
+		o 'CASE CaseOption Block',							-> <- [[$2,$3]]
+		o 'CASE CaseOption',								-> <- []
+		o 'CaseOption Block',								-> <- [[$1,$2]]
+		o 'CaseOption',										-> <- []
+	]
+
+	DefaultCase: [
+		o 'ELSE Block',										-> <- [[$2]]
+		o 'ELSE',											-> <- []
+		o 'DEFAULT Block',									-> <- [[$2]]
+		o 'DEFAULT',										-> <- []
+	]
+	
+	CaseOption: [
+		o 'Exp',											-> <- [$1]
+		o 'CaseOption , Exp',								-> <- Concat $1, [$3]
+	]
+
+	Try: [
+		o 'TRY EmptyBlock CATCH TAG OptBlock',				-> $2.Inline = $5.Inline = no; <- new Try $2, (new Tag $4,LocN4), $5, null, [LocN1,LocN3]
+		o 'TRY EmptyBlock FINALLY OptBlock',				-> $2.Inline = $4.Inline = no; <- new Try $2, null, null, $4, [LocN1,null,LocN3]							
+		o 'TRY EmptyBlock CATCH TAG Block FINALLY OptBlock',	-> $2.Inline = $5.Inline = $7.Inline = no; <- new Try $2, (new Tag $4,LocN4), $5, $7, [LocN1,LocN3,LocN6]
+	]	
+
+	With: [
+		o 'WITH Exp Block',									-> <- new With $2, $3, LocN1
+	]
+
+	Call: [
+		o 'Exp ( )',										-> <- new Call $1, [], [LocN2,LocN3]
+		o 'Exp ( CallElements )',							-> <- new Call $1, $3, [LocN2,LocN4]
+	]
+
+	CallElements: [
+		o 'Exp',											-> <- [[$1,Loc]]
+		o 'CallElements , Exp',								-> <- Concat $1, [[$3,LocN2]]
+	]
+
+	Super: [
+		o 'SUPER',											(-> 
+			<- new Super null,[Loc,Loc,Loc]
+		), {prec: 'super'}
+		o 'SUPER ( )',										-> <- new Super [],[LocN1,LocN2,LocN3]
+		o 'SUPER ( CallElements )',							-> <- new Super $3,[LocN1,LocN2,LocN4]
+	]
+
+	Array: [
+		o '[ ]',											-> <- new Arra [], Loc
+		o '[ ArrayElements ]',								-> <- new Arra $2, Loc
+	]
+
+	ArrayElements: [		
+		o 'Exp',											-> <- [$1]
+		o 'ArrayElements , Exp',							-> <- Concat $1, $3
+	]
+
+	Object: [
+		o '{ }',											-> <- new Objt [],Loc
+		o '{ ObjectElements }',								-> <- new Objt $2,Loc
+	]
+
+	ObjectElements: [
+		o 'STRING',											-> <- [[(new String $1, LocN1),(new String $1,LocN1)]]
+		o 'TAG',											-> <- [[(new Tag $1, LocN1),(new Tag $1, LocN1)]]	
+		o 'NUMBER',											-> <- [[(new Number $1, LocN1),(new Number $1, LocN1)]]
+		o 'ObjectElements , STRING',						-> <- Concat $1, [[(new String $3,LocN3),(new String $3,LocN3)]]
+		o 'ObjectElements , TAG',							-> <- Concat $1, [[(new Tag $3,LocN3),(new Tag $3,LocN3)]]
+		o 'ObjectElements , NUMBER',						-> <- Concat $1, [[(new Number $3,LocN3),(new Number $3,LocN3)]]
+		o 'STRING : Exp',									-> <- [[(new String $1, LocN1),$3]]
+		o 'TAG : Exp',										-> <- [[(new Tag $1, LocN1),$3]]
+		o 'NUMBER : Exp',									-> <- [[(new Number $1, LocN1),$3]]
+		o 'ObjectElements , STRING : Exp',					-> <- Concat $1, [[(new String $3,LocN3),$5]]
+		o 'ObjectElements , TAG : Exp',						-> <- Concat $1, [[(new Tag $3,LocN3),$5]]
+		o 'ObjectElements , NUMBER : Exp',					-> <- Concat $1, [[(new Number $3,LocN3),$5]]
+		o 'ObjectElements ,'
+	]
+
+
+	Eol: [
+		o ';'
+		o 'EOL'
+	]
+
+	Value: [
+		o 'NULL',											-> <- new Reserved $1, Loc
+		o 'BOOLEAN',										-> <- new Boolean $1, Loc
+		o 'NUMBER',											-> <- new Number $1, Loc
+		o 'STRING',											-> <- new String $1, Loc
+		o 'UNDEFINED',										-> <- new Reserved $1, Loc
+		o 'REGEXP',											-> <- new Reserved $1, Loc
+		o 'NAN',											-> <- new Reserved $1, Loc
+	]
+
+
+operators = [	
+	['left',			'LOW']	
+	['left',			'INLINE']
+	['right',			'IF','ELSE']		
+	['left',			'FINALLY']
+	['left',			'=']
+	['left',			'ASSIGN_OP']
+	['left',			'?',':']
+	['left',			'LOGICAL']
+	['left',			'COMPARE']		
+	['left',			'BINARY_OP']
+	['left',			'IN']	
+	['left',			'+','-']	
+	['left',			'ARITHMETIC_PREC']	
+	['nonassoc',		'+-','~','DELETE','VOID','NOT','TYPEOF']
+	['left',			'INSTANCEOF']	
+	['left',			'.']
+	['left',			',']
+	['left',			'[',']']
+	['left',			'AWAIT']
+	['left',			'NEW']	
+	['left',			'super']
+	['left',			'(',')']		
+	['nonassoc',		'@']
+	['left',			'HI']
+]
+
+tokens = []
+for alternatives,name in grammar
+	for alt in alternatives
+		tt = alt[0].split ' '
+		for token in tt
+			tokens.push token unless grammar[token]
+		alt[1] = "return #alt[1] " if name is 'Start'		
+
+export new Parser {
+	tokens      : tokens.join ' '
+	bnf         : grammar
+	operators   : operators
+	startSymbol : 'Start'	
+}

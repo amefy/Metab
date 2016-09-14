@@ -1,0 +1,178 @@
+# Metab Language
+# Author: Amefy
+# Copyright (c) 2016 Amefy under license Apache-2.0
+# Language created with Jison, Copyright (c) 2009-2014 by Zachary Carter (https://github.com/zaach/jison) and based on Coffeescript, Copyright (c) 2009-2015 Jeremy Ashkenas (https://github.com/jashkenas/coffeescript)
+
+Parser = (require 'jison').Parser
+
+unwrap = /^\(\)\s*=>\s*{\s*return\s*([\s\S]*);\s*\}/
+
+o = (rule,action,prec) ->	
+	if action
+		res = unwrap.exec action
+		if res
+			res = res[1]
+		else
+			res = "(#action )()"
+		
+		res = res.replace /\bnew {1}/g, '$&yy.'				
+		res = '$$='+res
+	else		
+		res = "$$=[['#rule ',yytext,@$]]"
+		
+	<- [rule,res,prec]
+
+grammar = 
+	Start: [
+		o 'EOF',								-> <- ''
+		o 'Anys EOF',							-> <- $1.concat [['EOF','',{}]]
+	]
+
+	Anys: [
+		o 'Any',								-> <- $1
+		o 'Anys Any',							-> <- $1.concat $2				
+	]
+
+	Group: [		
+		o 'Indent Anys Outdent',				-> <- [['CHILD',  $1.concat(new JoinWith($2,'EOB','EOB').res).concat $3       ]]
+		o 'SquareIn Anys SquareOut',			-> <- [['CHILD',  $1.concat(new JoinWith($2,'EOB','EOB').res).concat $3       ]]
+		o 'ParenIn Anys ParenOut',				-> <- [['CHILD',  $1.concat(new JoinWith($2,'EOB','EOB').res).concat $3       ]]
+		o 'BlockIn Anys BlockOut',				-> <- [['CHILD',  $1.concat(new JoinWith($2,'EOB','EOB').res).concat $3       ]]
+		o 'SquareIn SquareOut',					-> <- $1.concat $2
+		o 'ParenIn ParenOut',					-> <- $1.concat $2
+		o 'BlockIn BlockOut',					-> <- $1.concat $2
+	]
+
+	ParenIn: [
+		o '('
+	]
+
+	ParenOut: [
+		o ')'
+	]
+
+	SquareIn: [
+		o '['
+	]
+
+	SquareOut: [
+		o ']'
+	]
+
+	BlockIn: [
+		o '{'
+	]
+
+	BlockOut: [
+		o '}'
+	]
+
+	Indent: [
+		o 'INDENT'
+	]
+
+	Outdent: [
+		o 'OUTDENT'
+	]
+
+	Any: [
+		o 'TAG'
+		o 'NUMBER'
+		o 'STRING'
+		o 'NULL'
+		o '+'
+		o '-'
+		o 'IF'
+		o 'ELSE'
+		o '*'
+		o '/'
+		o 'ARITHMETIC_PREC'
+		o '='
+		o '~'
+		o '+-'
+		o '->'
+		o ':'
+		o ','
+		o '?'
+		o '.'
+		o '..'
+		o '...'
+		o 'EOL'
+		o ';'
+		o 'CALLIN'
+		o 'TRY'
+		o 'CATCH'
+		o 'FINALLY'
+		o 'THROW'
+		o 'FOR'
+		o 'WHILE'		
+		o 'IN'
+		o 'ASSIGN_OP'
+		o 'COMPARE'
+		o 'UNDEFINED'
+		o 'CASE'
+		o 'NEW'
+		o 'THIS'
+		o 'AWAIT'
+		o 'DELETE'
+		o 'BREAK'
+		o 'CONTINUE'
+		o 'RETURN'
+		o 'DEBUGGER'
+		o 'SWITCH'
+		o 'CLASS'
+		o 'SUPER'
+		o 'DEFAULT'
+		o 'DO'
+		o 'LOOP'
+		o 'IMPORT'
+		o 'EXPORT'
+		o 'STATIC'
+		o 'VOID'
+		o 'NAN'
+		o 'INFINITY'
+		o 'TYPEOF'
+		o 'INSTANCEOF'
+		o 'WITH'
+		o 'LOGICAL'
+		o 'BINARY_OP'
+		o 'BOOLEAN'
+		o 'BY'
+		o 'ENUM'
+		o 'PROTECTED'
+		o 'PUBLIC'
+		o 'PRIVATE'
+		o 'CONST'
+		o 'REGEXP'		
+		o 'GET'
+		o 'SET'
+		o 'NOT'
+		o 'AS'
+		o '::',						-> <- [['.','.',this._$],['TAG','prototype',this._$]]
+		o 'Group',					-> <- $1		
+	]
+
+
+operators = [	
+	['left',			'LOW']		
+	['left',			'+','-']	
+	['left',			'[',']']
+	['left',			'(',')']	
+	['left',			'HI']
+]
+
+
+tokens = []
+for alternatives,name in grammar
+	for alt in alternatives
+		tt = alt[0].split ' '
+		for token in tt
+			tokens.push token unless grammar[token]
+		alt[1] = "return #alt[1] " if name is 'Start'		
+
+export new Parser {
+	tokens      : tokens.join ' '
+	bnf         : grammar
+	operators   : operators
+	startSymbol : 'Start'	
+}

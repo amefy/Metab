@@ -1,0 +1,2501 @@
+# Metab Language
+# Author: Amefy
+# Copyright (c) 2016 Amefy under license Apache-2.0
+# Language created with Jison, Copyright (c) 2009-2014 by Zachary Carter (https://github.com/zaach/jison) and based on Coffeescript, Copyright (c) 2009-2015 Jeremy Ashkenas (https://github.com/jashkenas/coffeescript)
+
+class JoinWith
+	res
+	init (elems,type,val) ->
+		res = []
+		for e,i in elems
+			if e[0] is 'EOL'
+				res.push [type,val,e[2]]					
+			else
+				res.push e			
+Funcs =  {
+	JoinWith: JoinWith 
+	Unchild: (tokens,prevtoken) ->				
+		Join = 'EOL'
+
+		if prevtoken 
+			if tokens[0][0] is 'INDENT'
+				if prevtoken[0] is '->'
+					Join = 'FUNC'
+				else prevtoken[0] is ','
+					Join = 'LIST'
+			else
+				Join = 'LIST'
+		else
+			if tokens[0][0] is '(' or tokens[0][0] is '[' or tokens[0][0] is '{'
+				Join = 'LIST'
+		
+		if (tokens[1][0] is 'TAG' or tokens[1][0] is 'STRING') and tokens[2][0] is ':' and tokens[0][0] isnt 'CLASS'
+			Join = 'OBJ' 
+
+		if  prevtoken and (prevtoken[0] is '{' or prevtoken[0] is '[')
+			Join = 'LIST'
+
+		res = []
+		for t,i in tokens
+			i = parseInt(i)
+			if t[0] is 'CHILD'
+				childs = Funcs.Unchild t[1], (i > 0 ? tokens[i-1] : undefined)
+				res = res.concat childs				
+			else t[0] is 'INDENT'
+				if Join is 'OBJ'
+					res.push Funcs.ChangeToken(t,'{','{')
+				else Join isnt 'LIST'
+					res.push t
+			else t[0] is 'OUTDENT'
+				if Join is 'OBJ'
+					res.push Funcs.ChangeToken(t,'}','}')
+				else Join isnt 'LIST'
+					res.push t
+			else t[0] is 'EOB' or t[0] is 'EOL'
+				if Join is 'OBJ'
+					res.push Funcs.ChangeToken(t,',',',') 	if i+1 isnt tokens.length-1
+				else Join is 'FUNC'
+					res.push Funcs.ChangeToken(t,';',';')
+				else Join is 'LIST'
+					res.push Funcs.ChangeToken(t,',',',')	if i+1 isnt tokens.length-1 and res[res.length-1][0] isnt ',' and tokens[i+1][0] isnt ','
+				else
+					res.push Funcs.ChangeToken(t,'EOL','\n')
+			else
+				res.push t
+
+		<- res = Funcs.RemoveUnusedEols res
+
+	RemoveUnusedEols: (tokens) ->
+		res = []
+		for t,i in tokens
+			i=parseInt(i)
+			unless (t[0] is ';' or t[0] is 'EOL') and res[res.length-1][0] is 'OUTDENT' and tokens[i+1][0] in ['ELSE','CATCH','FINALLY']
+				res.push t
+		<- res
+
+	CloseCalls: (tokens) ->
+		res = []
+		openCalls = []
+
+		for t,i in tokens	
+			i=parseInt(i)		
+			if t[0] is 'CHILD'				
+				if (t[1][0][0] is 'INDENT' and (not tokens[i-1] or (tokens[i-1][0] isnt ',' and tokens[i-1][0] isnt '->')) and tokens[i+1][0] isnt ',') or i+1 is tokens.length
+					while openCalls.length > 0
+						openCalls[openCalls.length-1][1].push Funcs.ChangeToken(tokens[i-1],')',')')					
+						if openCalls.length > 1
+							openCalls[openCalls.length-2][1].push openCalls[openCalls.length-1]
+							openCalls.pop()
+						else
+							res.push openCalls.pop()
+				
+				t[1] = Funcs.CloseCalls t[1] 		#Close calls in child
+			else t[0] is 'CALLIN'				
+				openCalls.push ['CHILD',[Funcs.ChangeToken(t,'(','(')]] 	#start of call
+				#LOG tokens[i+1]
+				continue
+			else ((t[0] is 'EOL' or t[0] is 'EOB' or t[0] is ';' or t[0] is 'IF' or t[0] is 'CHILD') and (not tokens[i-1] or tokens[i-1][0] isnt ',') and tokens[i+1][0] isnt ',') or i+1 is tokens.length				
+				while openCalls.length > 0
+					openCalls[openCalls.length-1][1].push Funcs.ChangeToken(t,')',')')					
+					if openCalls.length > 1
+						openCalls[openCalls.length-2][1].push openCalls[openCalls.length-1]
+						openCalls.pop()
+					else
+						res.push openCalls.pop()
+
+
+			
+			if openCalls.length > 0
+				openCalls[openCalls.length-1][1].push t
+			else
+				res.push t
+		
+		<- res		
+
+
+
+	RemoveSpaces: (tokens) ->
+		res = []
+		for v in tokens
+			if v[0] isnt 'SPACE'
+				res.push v
+		<- res
+	
+	ChangeToken: (token,type,val) ->
+		<- [type,val,token[2]]
+	
+
+	Concat: (arr, elems) ->
+		arr = [arr]     unless Array.isArray(arr)     #convert to array
+		elems = [elems]   unless Array.isArray(elems)
+
+		<- arr.concat elems	
+
+	parseError: (message, err) ->
+		console.info message+ ' expecting '+err.expected
+		throw message
+
+
+}
+
+
+class AstNode
+	Type
+	Parent
+	Loc
+	
+	init (loc) ->
+		Type = this.constructor.name
+		Loc = loc
+
+		if Loc? 
+			if Loc.first_line?
+				Loc.fromColumn = 0	unless Loc.fromColumn?
+				Loc.toColumn = 1	unless Loc.toColumn?
+				Loc.fromLine = 0	unless Loc.fromLine?
+				Loc.toLine = 0		unless Loc.toLine?
+			else Array.isArray(Loc)
+				for loc in Loc
+					if loc
+						loc.fromColumn = 0 	unless loc.fromColumn?
+						loc.toColumn = 1	unless loc.toColumn?
+						loc.fromLine = 0	unless loc.fromLine?
+						loc.toLine = 0		unless loc.toLine?
+
+	Tabs (n) ->
+		res = ''
+		i = 0
+		while i<n
+			res += '\t'
+			i++
+		<- res
+
+	SetParent (parent) ->
+		Parent = parent
+
+	SetChildParents (childs) ->			
+		for c in childs
+			#LOG c
+			c.SetParent this
+
+	GetLocalVars ->
+		<- []
+	GetChildLocalVars (childs) ->
+		res = []
+		for c in childs
+			locals = c['GetLocalVars']()
+
+			for l in locals
+				res.push l	unless l in res
+			
+		<- res 
+
+	TransformAST (locals,classNames) ->
+		void 0
+	TransformASTInChild (childs,locals,classNames) ->
+		for c in childs
+			c['TransformAST'] locals,classNames
+
+	GetMappings ->	
+		if Loc?							
+			<- [Loc]
+		else
+			<- []
+
+	CloneObj (obj) ->
+		<- JSON.parse JSON.stringify obj
+
+
+
+
+
+
+class Document : AstNode
+	HasAwaits = no
+	HasExports = no
+	File
+	Childs
+	ClassNames = {Variables:[],StaticVariables:[],Methods:[],StaticMethods:[],Consts:[],Enums:[],Class:null,Function:null,Classes:{}}
+
+	init (childs,loc) ->
+		super loc
+
+		ClassNames.Document = this
+		Childs = childs
+
+	ProcessAST (file='file',cbimport,cb,ce) ->					
+		SetParents()
+
+		importings = []
+		for c in Childs
+			if c.Type is 'Import'						
+				importings.push new Promise (cbp,cep) ->
+					cbimport file,c.Path.substr(1,c.Path.length-2), (nodes) ->							
+						if nodes and nodes.ClassNames
+							for v,k in nodes.ClassNames.Classes
+								unless ClassNames.Classes[k]
+									ClassNames.Classes[k] = v
+						cbp()
+
+		Promise.all(importings).then(->
+			TransformAST()	
+			cb()
+		).catch(ce)
+
+	ProcessASTSync (file='file',cbimport) ->
+		SetParents()
+
+		for c in Childs
+			if c.Type is 'Import'						
+				nodes = cbimport file,c.Path.substr(1,c.Path.length-2)
+				if nodes and nodes.ClassNames
+					for v,k in nodes.ClassNames.Classes
+						unless ClassNames.Classes[k]
+							ClassNames.Classes[k] = v				
+
+		TransformAST()			
+	
+	GetCode (tabs,tabsin,file='file',cb,ce) ->		
+		try 
+			cb GetCodeSync tabs, tabsin, file			
+		catch e
+			ce e
+
+	GetCodeSync (tabs,tabsin,file) ->
+		File = file
+		res = ''
+
+		if HasExports
+			res += 'Metab.r = function(){var Export={};\n\n'
+
+		if HasAwaits
+			res +=(HasExports ? 'return ' : '')+"(function(){return new Promise((cb,ce) => {var g = (function*(){try{\n\n"
+			tabs++
+			tabsin++		
+
+		for c in Childs
+			res += c['GetCode'](tabs,tabs)+'\n'
+
+		if HasAwaits
+			res += "\n}catch(e){ce(e)} })();var Next = (n)=> {if(n.done){cb("+(HasExports ? 'Export' : 'n.value')+")}else{n.value.then((v)=>{Next(g.next(v))}).catch((e)=>{Next(g.throw(e))})}};Next(g.next())})})(this);"
+		
+		if HasExports
+			res += '\n'+(HasAwaits ? '' : 'return Export;')+'}'
+
+		<- res
+
+
+	TransformAST ->
+		locals = GetLocalVars()
+
+		if locals.length > 0
+			Childs.unshift(new LocalVar locals)
+
+		this.TransformASTInChild Childs, locals, ClassNames
+
+	SetParents ->
+		this.SetChildParents Childs
+
+	GetLocalVars ->
+		<- this.GetChildLocalVars Childs
+
+	GetMappings ->
+		Loc = {
+			toColumn: 0
+			fromColumn: 0
+			toLine: 0
+			fromLine: 0
+			first_line: 0
+			first_column: 0
+			last_line: 0
+			last_column: 0
+		}
+		end = CloneObj Loc
+
+		res = []
+
+		if HasExports
+			Loc.toLine +=2				
+			#res += 'Metab.r = function(){var Export={};\n\n'
+
+		if HasAwaits
+			Loc.toLine +=2
+			#res +=(HasExports ? 'return ' : '')+"(function(){return new Promise((cb,ce) => {var g = (function*(){try{\n\n"
+
+		res = [Loc]
+
+		for c in Childs
+			res = res.concat c['GetMappings']()
+			res[res.length-1].toLine++
+			#res += c['GetCode'](tabs,tabs)+'\n'
+
+					
+		if HasAwaits			
+			end.fromLine = 1
+			end.toColumn = 54 + (HasExports? 6 : 7) + 102
+			#res += "\n}catch(e){ce(e)} })();var Next = (n)=> {if(n.done){cb("+(HasExports ? 'Export' : 'n.value')+")}else{n.value.then((v)=>{Next(g.next(v))}).catch((e)=>{Next(g.throw(e))})}};Next(g.next())})})(this);"
+			
+		if HasExports
+			end.fromLine++
+			end.toColumn = (HasAwaits ? 0 : 14) + 1
+			#res += '\n'+(HasAwaits ? '' : 'return Export;')+'}'
+
+		<- res.concat [end]
+
+Funcs.Document = Document
+		
+
+class Block : AstNode
+	Body
+	Inline
+	Pre
+	Post
+	PreIn
+	PostIn
+	TabsIn
+	init (body,inline,loc) ->
+		super loc		
+		Body = body
+		Inline = inline
+		Pre = ''
+		Post = ''
+		PreIn = ''
+		PostIn = ''
+		
+	GetCode (tabs,tabsin) ->
+		body = Pre
+
+		TabsIn = [tabs,tabsin]
+
+		if Body.length > 1 or Body.length is 0 or Inline isnt yes
+			body +=Tabs(tabs)+'{\n'+PreIn
+			for s in Body
+				body += s.GetCode(tabsin+1,tabsin+1)+'\n'
+			body +=Tabs(tabsin)+PostIn+'}'+Post
+		else
+			body = Pre+PreIn+Body[0].GetCode(tabs, tabsin)+PostIn+Post
+
+		<- body
+
+	SetParent (parent) ->
+		super
+		this.SetChildParents Body
+
+	GetLocalVars ->
+		<- this.GetChildLocalVars Body
+
+	TransformAST (locals,classNames) ->
+		this.TransformASTInChild Body, locals, classNames
+
+	GetMappings ->			
+		if Body.length > 1 or Body.length is 0 or Inline isnt yes
+			body = []
+			Loc[0].fromColumn = TabsIn[0]
+			Loc[0].toColumn = 1
+			Loc[0].toLine = 1
+
+
+			body = body.concat [Loc[0]]
+			#body +=Tabs(tabs)+'{\n'+PreIn
+			for s in Body
+				newLine = CloneObj Loc[0]
+				newLine.fromColumn = 0
+				newLine.toColumn = 0
+				newLine.toLine = 1
+				body = body.concat s.GetMappings(), [newLine]
+				#body += s.GetCode(tabsin+1,tabsin+1)+'\n'
+			Loc[1].fromColumn = TabsIn[1]
+			Loc[1].toColumn = 1
+			body = body.concat [Loc[1]]
+			#body +=Tabs(tabsin)+PostIn+'}'+Post
+		else
+			body = Body[0].GetMappings()
+			#body = Pre+PreIn+Body[0].GetCode(tabs, tabsin)+PostIn+Post
+
+		<- body
+
+Funcs.Block = Block		
+
+class Class : AstNode
+	Name,Extends,Body,ClassNames,GlobalClassNames,TabsIn
+	init (name,_extends,body,loc) ->
+		super loc
+		Name = name
+		Extends = _extends 	if _extends
+		Body = body 			if body
+
+		ClassNames = 
+			Methods: []
+			StaticMethods: []
+
+			Variables: []
+			StaticVariables: []
+
+			Consts: []
+			Enums: []
+
+			Class: this
+
+	
+	GetCode (tabs,tabsin) ->	
+		TabsIn = tabs			
+		if Extends
+			exten = " extends "+Extends.GetCode 0, tabsin
+		else
+			exten = ''
+
+
+		if Body		
+			constru = ''
+			methods = ''
+			statics = ''
+
+			if Extends
+				constru += Tabs(tabs+2)+'super(...args);\n'
+
+			for i in Body
+				if i.Static or i.Type is 'Enum' or i.Type is 'Const'
+					if i.Type is 'Function'
+						statics += Name.GetCode(tabs,tabsin)+'.'
+					statics += i.GetCode(0,tabsin)+';\n'
+				else i.Type is 'Var'
+					constru += i.GetCode(tabs+2,tabsin+2)+';\n'
+				else 						
+					methods += i.GetCode(tabs+1,tabsin+1)+'\n'			
+
+			constru += Tabs(tabs+2)+'if(!(this.constructor.prototype instanceof '+Name.GetCode(0,tabsin)+') && this.init)return this.init(...args);'
+
+			#if constru.length>0
+			constru = "#this.Tabs(tabs+1,tabsin+1) constructor(...args) {\n#constru \n#this.Tabs(tabs+1,tabsin+1) }"
+			
+			body = "{\n#constru \n#methods \n#this.Tabs(tabs) }\n#statics "
+		else
+			body = '{}'
+
+		<- "#this.Tabs(tabs) class #Name.GetCode(0,tabsin) #exten #body "
+
+	SetParent (parent) ->
+		super		
+		Name.SetParent this
+		Extends.SetParent this 	if Extends
+		this.SetChildParents Body 	if Body
+	
+	TransformAST (locals,classNames) ->			
+		ClassNames.Document = classNames.Document
+		classNames.Classes[Name.Value] = this
+		GlobalClassNames = classNames
+		if Body
+			for i in Body
+				switch i.Type
+					case 'Enum'
+						ClassNames.Enums.push i.Name.Value
+					case 'Const'
+						ClassNames.Consts.push i.Name.Value
+					case 'Var'
+						if i.Static 
+							ClassNames.StaticVariables.push i.Name.Value
+						else
+							ClassNames.Variables.push i.Name.Value
+					case 'Function'
+						if i.Static 
+							ClassNames.StaticMethods.push i.Name.Value
+						else
+							ClassNames.Methods.push i.Name.Value
+
+		Name.TransformAST locals, classNames
+		Extends.TransformAST locals, classNames 				if Extends
+		this.TransformASTInChild Body, locals, ClassNames		if Body						
+
+	GetProperty (name) ->			
+		if name in ClassNames.Variables or name in ClassNames.Methods
+			<- {Static:no}
+		else name in ClassNames.StaticVariables or name in ClassNames.StaticMethods or name in ClassNames.Enums or name in ClassNames.Consts
+			<- {
+				ClassName: Name.Value
+				Static: yes
+			}
+		else Extends and GlobalClassNames.Classes[Extends.Value]
+			<- GlobalClassNames.Classes[Extends.Value].GetProperty name
+
+	GetMappings ->
+		if Extends
+			Loc[1].toColumn = 9
+			exten = [Loc[1]].concat Extends.GetMappings()
+			#" extends "+Extends.GetCode 0, tabsin
+		else
+			exten = []
+
+
+		if Body		
+			constru = []
+			methods = []
+			statics = []
+
+			if Extends
+				cons = CloneObj Loc[0]
+				cons.toLine = 1
+				constru = [cons]
+				#Tabs(tabs+2)+'super(...args);\n'
+
+			for i in Body
+				if i.Static or i.Type is 'Enum' or i.Type is 'Const'
+					if i.Type is 'Function'
+						n = Name.GetMappings()
+						n[0].toColumn++
+						statics = statics.concat n
+						#Name.GetCode(tabs,tabsin)+'.'
+					statics = statics.concat i.GetMappings()
+					statics[statics.length-1].toLine++
+					#statics += i.GetCode(0,tabsin)+';\n'
+				else i.Type is 'Var'
+					v = i.GetMappings()
+					v[v.length-1].toLine++
+					constru = constru.concat v
+					#constru += i.GetCode(tabs+2,tabsin+2)+';\n'
+				else 
+					m = i.GetMappings()
+					m[m.length-1].toLine++
+					methods = methods.concat m
+					#methods += i.GetCode(tabs+1,tabsin+1)+'\n'			
+			
+			#constru += Tabs(tabs+2)+'if(!(this.constructor.prototype instanceof '+Name.GetCode(0,tabsin)+') && this.init)return this.init(...args);'
+
+			skipLine = CloneObj Loc[0]
+			skipLine.toLine = 1
+
+			#if constru.length>0					
+			constru = [CloneObj skipLine].concat constru, [CloneObj skipLine]
+				#constru = "#this.Tabs(tabs+1,tabsin+1) constructor(...args) {\n#constru \n#this.Tabs(tabs+1,tabsin+1) }"
+			
+
+			body = [CloneObj skipLine].concat constru, [CloneObj skipLine], methods, [CloneObj skipLine], [CloneObj skipLine], statics			
+			#body = "{\n#constru \n#methods \n#this.Tabs(tabs) }\n#statics "
+		else
+			clos = CloneObj Loc[0]
+			clos.toColumn = 2
+			body = [clos]
+
+		Loc[0].fromColumn += TabsIn
+		Loc[0].toColumn = 6
+		<- [Loc[0]].concat Name.GetMappings(), exten, body
+		#<- "#this.Tabs(tabs) class #Name.GetCode(0,tabsin) #exten #body "
+
+Funcs.Class = Class
+		
+class Enum : AstNode
+	Name,Values,Static,Access
+	init (name,values,loc) ->
+		super loc
+		Name = name
+		Values = values
+
+	
+	GetCode (tabs,tabsin) ->
+		res = "#Name.GetCode(tabs,tabsin)  = {"		
+		for v,i in Values			
+			res += ',' 		if i > 0 				
+			res += "\n#v.GetCode(tabsin+1,tabsin+1) "
+		res += "\n#Tabs(tabsin) }"	
+		<- res
+
+	SetParent (parent) ->
+		super
+		Name.SetParent this
+		this.SetChildParents Values
+
+	TransformAST (locals,classNames) ->
+		i = 0
+		for v in Values
+			if v.Value?
+				i = parseInt v.Value.Value
+			else
+				v.Value = new Number i,Name.Loc
+			i++
+
+		Name.TransformAST this, classNames		
+		this.TransformASTInChild Values, classNames
+	GetMappings ->
+		res = Name.GetMappings()
+		res = res.concat [Loc[0]]
+		
+		for v,i in Values
+			valMap = v.GetMappings()
+			valMap[0].fromLine++
+			res = res.concat valMap
+
+		Loc[1].fromLine = 1
+		res = res.concat [Loc[1]]
+
+		<- res
+
+
+Funcs.Enum = Enum		
+
+class EnumValue : AstNode
+	Name,Value
+	init (name,value,loc) ->
+		super loc
+		Name = name
+		Value = value			
+	
+	GetCode (tabs,tabsin) ->
+		<- this.Tabs(tabs)+'"'+Name.GetCode(0,0)+'" : '+Value.GetCode(0,0)
+
+	GetMappings ->
+		<- Name.GetMappings()
+		
+Funcs.EnumValue = EnumValue		
+
+class Const : AstNode
+	Name,Value,Static,Access
+	init (name,value,loc) ->
+		super loc		
+		Name = name
+		Value = value		
+	
+	GetCode (tabs,tabsin) ->		
+		if this.Parent.Type is 'Class'
+			<- Name.GetCode(tabs,tabsin)+' = '+Value.GetCode(0,tabsin)
+		else
+			<- this.Tabs(tabs)+'const '+Name.GetCode(0,tabsin)+' = '+Value.GetCode(0,tabsin)
+
+	SetParent (parent) ->
+		super
+		Name.SetParent this
+		Value.SetParent this
+
+	TransformAST (locals,classNames) ->
+		Name.TransformAST this, classNames
+		Value.TransformAST this, classNames
+
+	GetMappings ->
+		name = Name.GetMappings()
+		if Array.isArray(Loc)
+			Loc[0].fromLine = Loc[0].toLine = Loc[0].fromColumn = 0
+			Loc[0].toColumn = 0
+			Loc[1].fromLine = Loc[1].toLine = Loc[1].fromColumn = 0
+			Loc[1].toColumn = 3
+			<- [Loc[0]].concat name, [Loc[1]], Value.GetMappings()	
+		else					
+			Loc.toColumn += 2					
+			<- name.concat [Loc], Value.GetMappings()
+		
+
+Funcs.Const = Const
+
+class Reserved : AstNode
+	Value
+	init (value,loc) ->
+		super loc		
+		Value = value
+	
+	GetCode (tabs,tabsin) ->
+		if Loc
+			Loc.fromColumn = tabs
+			Loc.toColumn = Value.length
+		<- Tabs(tabs)+Value
+
+Funcs.Reserved = Reserved	
+
+class Number : Reserved	
+	init (value,loc) ->			
+		super value, loc			
+Funcs.Number = Number		
+
+class String : Reserved
+	init (value,loc) ->			
+		super value, loc	
+Funcs.String = String		
+
+class This : Reserved
+	init (value,loc) ->			
+		super value, loc	
+Funcs.This = This
+
+class Op : Reserved	
+	init (value,loc) ->			
+		super value, loc	
+Funcs.Op = Op
+
+class Continue : AstNode	
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn = tabs
+		Loc.toColumn = 8
+		<- Tabs(tabs)+"continue;"		
+
+Funcs.Continue = Continue		
+
+class Break : AstNode
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn = tabs
+		Loc.toColumn = 5
+		<- Tabs(tabs)+"break;"		
+
+Funcs.Break = Break	
+
+class Tag : AstNode
+	Value,IsClassStatic,IsClassProp,_ClassName
+	init (value,loc) ->			
+		super loc		
+		Value = value
+		IsClassStatic = no
+		IsClassProp = no
+		_ClassName = null
+	
+	GetCode (tabs,tabsin) ->
+		if IsClassProp	
+			if IsClassStatic		
+				val = _ClassName+'.'+Value			
+			else
+				val = 'this.'+Value
+		else
+			val = Value
+
+		
+		Loc.fromColumn += tabs			
+		Loc.toColumn = val.length
+		
+		<- Tabs(tabs)+val
+
+	CanBeClassProperty ->
+		if this.Parent
+			switch this.Parent.Type
+				case 'Property'
+					if this.Parent.Left isnt this
+						<- no
+				case 'Call'
+					if this.Parent.Left is this and this.Parent.Parent and this.Parent.Parent.Type is 'Property' and this.Parent.Parent.Left isnt this.Parent
+						<- no
+				case 'Index'
+					if this.Parent.Left is this and this.Parent.Parent and this.Parent.Parent.Type is 'Property' and this.Parent.Parent.Left isnt this.Parent
+						<- no
+				case 'Function'
+					<- no
+		<- yes
+
+	GetLocalVars ->
+		#if CanBeClassProperty() && IsClassProp
+		if not IsClassProp and this.Parent and this.Parent.Type is 'Assignament' and this.Parent.Op.Value is '=' and (this.Parent.Left is this or (this.Parent.Right is this and this.Parent.Parent and this.Parent.Parent.Type is 'Assignament' and this.Parent.Parent.Op.Value is '=') )
+			<- [Value]
+		else
+			<- []
+
+	TransformAST (locals,classNames) ->	
+		if CanBeClassProperty()			
+			if classNames.Class					
+				p = classNames.Class.GetProperty Value
+				if p
+					if p.Static
+						IsClassProp = yes
+						IsClassStatic = yes				
+						_ClassName = p.ClassName
+					else
+						IsClassProp = yes
+
+Funcs.Tag = Tag
+
+class Var : AstNode
+	Name,Value,Static,Access,TabsIn
+	init (name,value,loc) ->		
+		super loc		
+		Name = name
+		Value = value
+	
+	GetCode (tabs,tabsin) ->
+		TabsIn = tabs
+
+		res = Name.GetCode(tabs,tabsin)+' = '
+
+		if Value					
+			res += Value.GetCode 0,tabsin
+		else
+			res += 'null'
+		<- res
+
+	SetParent (parent) ->
+		super
+		Name.SetParent this
+		Value.SetParent this		if Value
+
+	TransformAST (locals,classNames) ->
+		Name.TransformAST this, classNames
+		Value.TransformAST this, classNames		if Value
+
+	GetMappings ->
+		name = Name.GetMappings()
+		if Value
+			if Array.isArray(Loc)
+				Loc[0].toColumn = 0
+				Loc[1].toColumn = 3
+				<- [Loc[0]].concat name, [Loc[1]], Value.GetMappings()	
+			else					
+				Loc.toColumn += 2					
+				<- name.concat [Loc], Value.GetMappings()
+		else
+			if Loc
+				Loc.toColumn = 0
+				<- [Loc].concat name
+			else
+				<- name			
+
+Funcs.Var = Var		
+
+class Function : AstNode
+	Name,Params,Async,HasAwaits,OldStyle,Body,Getter,GetterL,Static,HasArgs,TabsIn
+	init (name,params,asyn,oldStyle,body,loc) ->
+		super loc		
+		Name = name
+		Params = params
+		Async = asyn
+		HasAwaits = no
+		HasArgs = no
+		OldStyle = oldStyle
+		Body = body
+		Body.Inline = no
+	
+	GetCode (tabs,tabsin) ->
+		TabsIn = tabs
+
+		if Params
+			params = ''
+			for p,i in Params
+				params += ', '		if i > 0
+				params += p.GetCode 0,tabsin
+		else
+			if HasAwaits or HasArgs
+				params = '...args'
+			else
+				params = ''
+
+		if Getter
+			getter = Getter+' '
+		else
+			getter = ''
+
+		if Static
+			if OldStyle				
+				head = "function (#params )"
+			else
+				head = "(#params ) =>"
+			<- "#Name.GetCode(tabs,tabsin)  = #head  #Body.GetCode(tabs,tabsin) "
+		else
+			if OldStyle and this.Parent.Type isnt 'Class'
+				head = "function (#params )"
+			else
+				head = "(#params ) #{ ((Name?) ? '' : '=> ') }"
+			<- Tabs(tabs)+getter+"#{ (Name? ? Name.GetCode(0,tabsin) : '') }#head #Body.GetCode(tabs,tabsin) "
+
+	SetParent (parent) ->
+		super
+		Name.SetParent this				if Name	
+		this.SetChildParents Params 	if Params
+		Body.SetParent this
+
+	TransformAST (locals,classNames) ->			
+		ParentFunc = classNames.Function
+		classNames.Function = this
+		if Async
+			inBlock = new Block Body.Body,yes,(CloneObj Body.Loc)
+			funcPar = new FunctionParam 'ce',null,(CloneObj Loc)
+			inFunc = new Function null,[(new FunctionParam 'cb',null,(CloneObj Loc)),funcPar],no,no,inBlock,(CloneObj Loc)
+			inCall = new Call (new Tag 'Promise',(CloneObj Loc)), [[inFunc,(CloneObj Loc)]], [(CloneObj Loc),(CloneObj Loc)]
+
+			head = new Return (new New inCall, (CloneObj Loc)), (CloneObj Loc)
+			Body.Body = [head]
+			
+			head.SetParent Body
+
+		l = Body.GetLocalVars()			
+		
+		paramsLocals = []
+		if Params
+			for p in Params
+				paramsLocals.push p.Name
+
+		myLocals = []
+		for c in l
+			unless c in paramsLocals or (classNames.Class and classNames.Class.GetProperty(c)) or c in locals
+				myLocals.push c		
+
+		if myLocals.length > 0
+			Body.Body.unshift(new LocalVar myLocals)
+
+		Name.TransformAST locals, classNames 		if Name
+		this.TransformASTInChild Params, classNames 	if Params
+		Body.TransformAST locals.concat(myLocals), classNames
+		
+		if this.Parent.Type is 'Class'
+
+			if classNames.Class.Extends and Name.Value is 'constructor'
+				s = new Super []
+				Body.Body.unshift s
+				s.SetParent this
+				s.TransformAST locals, classNames
+
+		if HasAwaits
+			if Params
+				params = ''
+				for p,i in Params
+					params += ', '		if i > 0
+					params += p.Name
+			else
+				params = '...args'
+
+			generator = new Reserved 'return new Promise((cb,ce) => {var g = (function*(){try{', (CloneObj Loc)
+
+			head = new Block Body.Body, yes, CloneObj Body.Loc
+			iterator = new Reserved '}catch(e){ce(e)} }).'+(Params? 'call' : 'apply')+'(this,'+params+');var Next = (n)=> {if(n.done){cb(n.value);}else{n.value.then((v)=>{Next(g.next(v))}).catch((e)=>{Next(g.throw(e))})}};Next(g.next())});'
+			
+			Body.Body = [generator,head,iterator]
+			generator.SetParent Body
+			head.SetParent Body
+			iterator.SetParent Body
+
+		classNames.Function = ParentFunc
+
+	GetMappings ->
+		params = []
+		if Params
+			for p,i in Params
+				if i > 0
+					com = CloneObj Loc
+					com.toColumn = 2
+					params = params.concat [com]
+					#params += ', '		if i > 0
+				params = params.concat p.GetMappings()
+				#params += p.GetCode 0,tabsin
+		else
+			if HasAwaits or HasArgs
+				args = CloneObj Loc
+				args.toColumn = 7
+				params = params.concat [args]
+				#params = '...args'
+
+		if Getter
+			getter = CloneObj Loc
+			getter.toColumn = 4
+			getter = [getter]
+			#getter = Getter+' '
+		else
+			getter = []
+
+		if Static
+			if OldStyle				
+				funstart = CloneObj Loc
+				funstart.toColumn = 10
+				funend = CloneObj Loc
+				funend.toColumn = 1
+				head = [funstart].concat params, [funend]
+				#head = "function (#params )"
+			else
+				funstart = CloneObj Loc
+				funstart.toColumn = 1
+				funend = CloneObj Loc
+				funend.toColumn = 4
+				head = [funstart].concat params, [funend]
+				#head = "(#params ) =>"
+			eq = CloneObj Loc
+			eq.toColumn = 3
+
+			<- Name.GetMappings().concat [eq], head, Body.GetMappings()
+			#<- "#Name.GetCode(tabs,tabsin)  = #head  #Body.GetCode(tabs,tabsin) "
+		else
+			if OldStyle and this.Parent.Type isnt 'Class'
+				func = CloneObj Loc
+				func.toColumn = 10
+				head = [func].concat params, [CloneObj Loc]
+				#head = "function (#params )"
+			else
+				start = CloneObj Loc
+				start.toColumn = 3
+				paren = CloneObj Loc
+				paren.toColumn = 2
+				head = [CloneObj Loc].concat params, [paren], (Name? [] : [start])
+				#head = "(#params ) #{ ((Name?) ? '' : '=> ') }"
+			Loc.fromColumn = TabsIn
+			Loc.toColumn = 0
+			<- [Loc].concat getter, (Name? ? Name.GetMappings():[]), head, Body.GetMappings()
+			#<- Tabs(tabs)+getter+"#{ (Name? ? Name.GetCode(0,tabsin) : '') }#head #Body.GetCode(tabs,tabsin) "
+
+		<- res
+
+
+Funcs.Function = Function
+
+
+class FunctionParam : AstNode
+	Name,Value
+	init (name,value,loc) ->		
+		super loc
+		Name = name
+		Value = value
+
+	GetCode (tabs,tabsin) ->
+		if Value
+			<- Name+'='+Value.GetCode 0,tabsin
+		else
+			<- Name
+	SetParent (parent) ->
+		super
+		Value.SetParent this		if Value
+
+	TransformAST (locals,classNames) ->		
+		Value.TransformAST locals, classNames		if Value
+
+	GetMappings ->
+		if Value
+			if Loc.length is 3
+				Loc[0].toColumn++														
+				Loc[1].toColumn = Name.length
+			else
+				Loc[0].toColumn = Name.length
+			<- Loc.concat Value.GetMappings()
+		else
+			if Array.isArray(Loc)					
+				Loc[0].toColumn++
+				Loc[1].toColumn = Name.length					
+				<- Loc
+			else
+				Loc.toColumn = Name.length
+				<- [Loc]
+
+Funcs.FunctionParam = FunctionParam
+
+
+class Await : AstNode
+	Exp
+	init (exp,loc) ->		
+		super loc		
+		Exp = exp
+		
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn = tabs
+		Loc.toColumn = 6
+
+		<- Tabs(tabs)+'yield '+Exp.GetCode(0,tabsin)
+
+	SetParent (parent) ->
+		super
+		Exp.SetParent this
+
+	TransformAST (locals,classNames) ->		
+		if classNames.Function
+			classNames.Function.HasAwaits = yes 	
+		else			
+			classNames.Document.HasAwaits = yes
+			
+		Exp.TransformAST locals, classNames		
+
+	GetMappings ->					
+		<- [Loc].concat Exp.GetMappings()
+
+Funcs.Await = Await
+
+	
+class Operation : AstNode
+	A,B,C,TabsIn
+	init (a,b,c,loc) ->		
+		super loc
+		
+		A = a
+		B = b
+		C = c			
+	
+	GetCode (tabs,tabsin) ->	
+		TabsIn = tabs
+
+		a = A.GetCode 0, tabsin	
+
+		spc = ''		
+		unless A.Type is 'Op' and (A.Value in ['++','--','+','-','~','!'])
+			spc += ' '						
+
+		if (B.Type is 'Op' and not (B.Value in ['++','--'])) or C or B.Type isnt 'Op'
+			b = spc + B.GetCode(0, tabsin) + ' '
+		else 	
+
+			b = B.GetCode(0, tabsin)
+			
+		if C
+			c = C.GetCode 0, tabsin
+		else
+			c = ''
+
+		<- Tabs(tabs)+a+b+c
+
+	SetParent (parent) ->
+		super
+
+		A.SetParent this
+		B.SetParent this
+		C.SetParent this			if C	
+
+	GetLocalVars ->
+		res = A.GetLocalVars()
+		res = res.concat B.GetLocalVars()
+		res = res.concat C.GetLocalVars() 		if C
+		<- res
+
+	TransformAST (locals,classNames) ->
+		A.TransformAST locals, classNames
+		B.TransformAST locals, classNames		
+		C.TransformAST locals, classNames		if C
+
+	GetMappings ->					
+		a = A.GetMappings()
+		#left[0].fromColumn += Loc.
+		
+		b = B.GetMappings()		
+		#b[0].fromColumn = b[0].fromColumn? b[0].fromColumn+1 : 1
+		b[b.length-1].toColumn+=2
+
+		if C
+			c = C.GetMappings()			
+			#c[0].fromColumn = c[0].fromColumn? c[0].fromColumn++ : 1
+			res = a.concat b.concat c
+		else
+			res = a.concat b			
+
+		res[0].fromColumn += TabsIn			
+		<- res
+		
+
+Funcs.Operation = Operation
+
+class In : AstNode
+	Left,Right
+	init (left,right,loc) ->
+		super loc		
+		Left = left
+		Right = right
+	
+	GetCode (tabs,tabsin) ->		
+		<- this.Tabs(tabs)+"#Right.GetCode(0,tabsin) .indexOf(#Left.GetCode(0,tabsin) ) >= 0"
+
+	SetParent (parent) ->
+		super
+
+		Left.SetParent this
+		Right.SetParent this
+
+	GetLocalVars ->
+		res = Left.GetLocalVars()
+		<- res.concat Right.GetLocalVars()
+		
+	TransformAST (locals,classNames) ->
+		Left.TransformAST locals, classNames
+		Right.TransformAST locals, classNames
+
+	GetMappings ->								
+		left = Left.GetMappings()						
+		index = CloneObj Loc
+		index.toColumn +=8
+		right = Right.GetMappings()			
+		endindex = Loc
+		endindex.toColumn += 6
+
+		Loc = right.concat [index], left, [endindex]
+		
+		<- Loc		
+
+Funcs.In = In
+
+class New : AstNode
+	Child
+	init (child,loc) ->		
+		super loc
+		Child = child		
+	
+	GetCode (tabs,tabsin) ->	
+		Loc.fromColumn = tabs			
+		Loc.toColumn = 4
+
+		<- this.Tabs(tabs)+'new '+Child.GetCode 0,tabsin
+
+	SetParent (parent) ->
+		super
+		Child.SetParent this
+
+	GetLocalVars ->
+		<- Child.GetLocalVars()
+
+	TransformAST (locals,classNames) ->	
+		Child.TransformAST locals, classNames
+	
+	GetMappings ->								
+		child = Child.GetMappings()						
+		
+		<- [Loc].concat child			
+
+Funcs.New = New		
+		
+class Super : AstNode
+	Params,SuperParams,Name,TabsIn,LocCommas
+	init (params,loc) ->		
+		super loc
+		
+		Params = []
+		LocCommas = []
+		for p,k,i in params
+			Params.push p[0]
+			if i>0
+				p[1].fromColumn = p[1].toLine = p[1].fromLine = 0
+				p[1].toColumn = 1
+				LocCommas.push p[1] 				
+	
+	GetCode (tabs,tabsin) ->	
+		TabsIn = tabs	
+		params = ''
+
+		if Params.length > 0			
+			for p,k,i in Params
+				params +=','
+				params += p.GetCode 0,tabsin
+		else SuperParams
+			for p,k,i in SuperParams
+				params +=','
+				params += p
+
+		if params.length > 0
+			<- Tabs(tabs)+Name+'.call(this'+params+')'
+		else
+			<- Tabs(tabs)+Name+'.apply(this,...args)'
+
+
+	SetParent (parent) ->
+		super		
+		this.SetChildParents Params 		if Params.length > 0
+
+	GetLocalVars ->
+		if Params.length > 0
+			<- this.GetChildLocalVars Params		
+		else
+			<- []
+
+	TransformAST (locals,classNames) ->		
+		FunctionClass = this.Parent
+		parent = this.Parent
+		while parent and parent.Type isnt 'Class'			
+			FunctionClass = parent
+			parent = parent.Parent
+
+		if FunctionClass.Params is null and Params.length is 0
+			FunctionClass.HasArgs = yes
+	
+		if classNames.Class and classNames.Class.Extends
+			Name = classNames.Class.Extends.Value+'.prototype.'+FunctionClass.Name.Value
+		else			
+			Name = 'Object.prototype.'+FunctionClass.Name.Value
+
+		if Params.length is 0 and FunctionClass.Params
+			SuperParams = []
+			for p in FunctionClass.Params
+				SuperParams.push p.Name
+
+		this.TransformASTInChild Params, locals, classNames		if Params.length > 0
+
+	GetMappings ->		
+		params = []
+
+		if Params.length > 0
+			for p,k,i in Params	
+				if i > 0
+					params.push LocCommas[i-1]
+				params = params.concat p.GetMappings()
+		else SuperParams
+			par = CloneObj Loc[0]
+			for p in SuperParams
+				par.toColumn += 2+p.length
+			params.push par					
+
+		nam = CloneObj Loc[0]
+		nam.fromColumn += TabsIn
+		if params.length > 0
+			nam.toColumn = Name.length+11			
+			#<- Tabs(tabs)+Name+'.call(this'+params+')'
+		else
+			nam.toColumn = Name.length+20			
+			#<- Tabs(tabs)+Name+'.apply(this,...args)'
+		<- [nam].concat params, [Loc[2]]
+
+Funcs.Super = Super
+
+class If : AstNode
+	Positive,Condition,Body,Else
+	init (positive,condition,body,_else,loc) ->		
+		super loc
+		Positive = positive
+		Condition = condition
+		Body = body
+		Else = _else
+	
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn += tabs
+
+		<- "#Tabs(tabs) if (#{ (Positive? '' : '!(') }#Condition.GetCode(0,tabsin) #{ (Positive? '' : ')') }) #Body.GetCode(tabs,tabsin) #{ (Else? '\n'+Else.GetCode(tabs,tabsin) : '') }"
+
+	SetParent (parent) ->
+		super
+		Condition.SetParent this		
+		Else.SetParent this	if Else
+		Body.SetParent this		
+
+	GetLocalVars ->
+		res = Condition.GetLocalVars()	
+		res = res.concat Else.GetLocalVars()				if Else
+		<- res.concat Body.GetLocalVars()	
+
+	TransformAST (locals, classNames) ->
+		Condition.TransformAST locals, classNames
+		Else.TransformAST locals, classNames	if Else
+		Body.TransformAST locals, classNames
+
+	GetMappings ->			
+		Loc.toColumn +=Positive ? 3:5			
+		<- [Loc].concat Condition.GetMappings(), Body.GetMappings(), (Else? Else.GetMappings() : [])
+
+Funcs.If = If		
+
+class Else : AstNode
+	Body
+	init (body,loc) ->		
+		super loc				
+		Body = body			
+	
+	GetCode (tabs,tabsin) ->		
+		Loc.fromColumn += tabs
+
+		<- "#Tabs(tabs) else #Body.GetCode(tabs,tabsin) "
+
+	SetParent (parent) ->
+		super		
+		Body.SetParent this
+
+	GetLocalVars ->
+		<- Body.GetLocalVars()
+
+	TransformAST (locals,classNames) ->
+		Body.TransformAST locals, classNames
+	GetMappings ->
+		Loc.fromLine++					
+		Loc.toColumn = 4					
+		<- [Loc].concat Body.GetMappings()
+
+Funcs.Else = Else		
+
+class InlineIf : AstNode
+	Condition,Positive,Negative
+	init (condition,positive,negative,loc) ->		
+		super loc		
+		Condition = condition
+		Positive = positive
+		Negative = negative
+
+	GetCode (tabs,tabsin) ->
+		<- Condition.GetCode(tabs,tabsin)+'? '+Positive.GetCode(0,tabsin)+' : '+Negative.GetCode(0,tabsin)
+
+	SetParent (parent) ->
+		super
+		Condition.SetParent this
+		Positive.SetParent this
+		Negative.SetParent this
+
+	GetLocalVars ->
+		res = Condition.GetLocalVars()	
+		res = res.concat Positive.GetLocalVars()
+		res = res.concat Negative.GetLocalVars()
+		<- res
+
+	TransformAST (locals, classNames) ->
+		Condition.TransformAST locals, classNames
+		Positive.TransformAST locals, classNames
+		Negative.TransformAST locals, classNames
+
+	GetMappings ->			
+		Loc[0].toColumn=2
+		Loc[1].toColumn=3
+		<- Condition.GetMappings().concat [Loc[0]],Positive.GetMappings(), [Loc[1]], Negative.GetMappings()			
+
+Funcs.InlineIf = InlineIf		
+
+class Do : AstNode
+	Condition,Body
+	init (body,condition,loc) ->		
+		super loc		
+		Condition = condition
+		Body = body
+
+	GetCode (tabs,tabsin) ->
+		Loc[0].fromColumn += tabs			
+		<- Tabs(tabs)+'do '+Body.GetCode(tabs,tabsin)+' while ('+Condition.GetCode(0,tabsin)+')'
+
+	SetParent (parent) ->
+		super
+		Condition.SetParent this
+		Body.SetParent this
+
+	GetLocalVars ->
+		res = Condition.GetLocalVars()	
+		<- res.concat Body.GetLocalVars()
+
+	TransformAST (locals,classNames) ->
+		Condition.TransformAST locals, classNames
+		Body.TransformAST locals,classNames
+
+	GetMappings ->
+		Loc[0].toColumn = 3
+		end = CloneObj Loc[1]
+		Loc[1].fromColumn++
+		Loc[1].toColumn = 7
+		<- [Loc[0]].concat Body.GetMappings(), [Loc[1]], Condition.GetMappings(), [end]
+
+Funcs.Do = Do		
+
+class While : AstNode
+	Condition,Body
+	init (condition,body,loc) ->		
+		super loc		
+		Condition = condition
+		Body = body
+
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn += tabs			
+		<- Tabs(tabs)+'while ('+Condition.GetCode(0,tabsin)+') '+Body.GetCode(tabs,tabsin)
+
+	SetParent (parent) ->
+		super
+		Condition.SetParent this
+		Body.SetParent this
+
+	GetLocalVars ->
+		res = Condition.GetLocalVars()	
+		res = res.concat Body.GetLocalVars()
+		<- res
+
+	TransformAST (locals,classNames) ->
+		Condition.TransformAST locals, classNames
+		Body.TransformAST locals, classNames
+
+	GetMappings ->
+		end = CloneObj Loc
+		end.fromColumn = 0
+		end.toColumn = 2
+
+		Loc.toColumn = 7
+		<- [Loc].concat Condition.GetMappings(), [end], Body.GetMappings()
+
+Funcs.While = While		
+
+class For : AstNode
+	Value,Key,Counter,Collection,Body #,ValueVar
+	init (value,key,counter,collection,body,loc) ->		
+		super loc		
+		Value = value
+		Key = key
+		Counter = counter
+		Collection = collection
+		Body = body
+
+		if Key and Value
+			#ValueVar = new LocalVar (Value.Value), "_for"
+			Body.Body.unshift(new Assignament (new Tag Value.Value,(CloneObj Value.Loc)), (new Op '=',(CloneObj Loc)),  (new Index Collection, (new Tag Key.Value,(CloneObj Key.Loc)),[(CloneObj Loc),(CloneObj Loc)]))
+		if Counter
+			Body.Body.push(new Operation (new Tag Counter.Value,(CloneObj Counter.Loc)), (new Op '++',(CloneObj Loc)))
+
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn += tabs
+
+		if Counter
+			c = Tabs(tabs)+'var '+Counter.Value+"=0\n"
+		else
+			c = ''
+
+		if Key or not Value
+			<- c+Tabs(tabs)+'for (var '+( Key ? Key.GetCode(0,tabsin) : '_r' )+' in '+Collection.GetCode(0,tabsin)+') '+Body.GetCode tabs,tabsin
+		else
+			<- c+Tabs(tabs)+'for (var '+Value.GetCode(0,tabsin)+' of '+Collection.GetCode(0,tabsin)+') '+Body.GetCode tabs,tabsin
+
+	SetParent (parent) ->
+		super
+		Value.SetParent this	if Value	
+		Key.SetParent this		if Key
+		Counter.SetParent this 	if Counter
+		Collection.SetParent this
+		Body.SetParent this
+
+	GetLocalVars ->	
+		res = []		
+		res = res.concat Collection.GetLocalVars()	
+		res = res.concat Body.GetLocalVars()
+		<- res
+
+	TransformAST (locals,classNames) ->
+		Value.TransformAST locals, classNames 	if Value
+		Key.TransformAST locals, classNames		if Key
+		Counter.TransformAST locals, classNames		if Counter
+		Collection.TransformAST locals, classNames
+		Body.TransformAST locals, classNames
+
+	GetMappings ->					
+		Loc.toColumn = 9	
+		if Counter
+			skipLine = CloneObj Loc
+			skipLine.toColumn = 0
+			skipLine.toLine = 1
+			c = [skipLine]
+			#Tabs(tabs)+'var '+Counter.Value+"=0\n"
+		else
+			c = []						
+
+		if Key or not Value
+			Loc.toColumn += 2 unless Key
+			inn = CloneObj Loc
+			inn.fromColumn = 0
+			inn.toColumn = 4
+			par = CloneObj inn				
+			par.toColumn = 2
+			<- c.concat [Loc], (Key? Key.GetMappings():[]), [inn], Collection.GetMappings(), [par], Body.GetMappings()
+			#<- c+Tabs(tabs)+'for (var '+( Key ? Key.GetCode(0,tabsin) : '_r' )+' in '+Collection.GetCode(0,tabsin)+') '+Body.GetCode tabs,tabsin
+		else								
+			off = CloneObj Loc
+			off.fromColumn = 0
+			off.toColumn = 4
+			par = CloneObj off
+			par.toColumn = 2				
+			<- c.concat [Loc], Value.GetMappings(), [off], Collection.GetMappings(), [par], Body.GetMappings()
+			#<- c+Tabs(tabs)+'for (var '+Value.GetCode(0,tabsin)+' of '+Collection.GetCode(0,tabsin)+') '+Body.GetCode tabs,tabsin
+
+
+Funcs.For = For		
+
+
+class ForRange : AstNode
+	enum STEP_TYPES POSITIVE, NEGATIVE, NUMBER, UNKNOWN
+	Key,Inclusive,From,To,Body,Step,StepType,NumberRanges
+	init (key,inclusive,from,to,step,body,loc) ->
+		super loc		
+		Key = key or new Tag '_o'
+		Inclusive = inclusive
+		From = from
+		To = to
+		Body = body
+		Step = step
+		
+	GetCode (tabs,tabsin) ->	
+		Loc.fromColumn += tabs
+
+		from = From.GetCode 0,tabsin
+		to = To.GetCode 0,tabsin
+		key = Key.GetCode 0,tabsin
+		
+		f = parseInt from
+		t = parseInt to
+
+		if isNaN(f) or isNaN(t)	
+			NumberRanges = no		
+			if Inclusive
+				end = "#from <#to ? #key <=#to  : #key >=#to "
+			else
+				end = "#from <#to ? #key <#to  : #key >#to "
+		else
+			NumberRanges = yes
+			if Inclusive
+				if f < t
+					end = "#key <= #to "
+				else
+					end = "#key >= #to "
+			else
+				if f < t
+					end = "#key < #to "
+				else
+					end = "#key > #to "	
+			
+
+		stepcode = Step.GetCode 0,tabsin
+
+		try
+			s = parseInt stepcode
+			if s is 1
+				StepType = STEP_TYPES.POSITIVE
+				step = key+'++'
+			else s is -1
+				StepType = STEP_TYPES.NEGATIVE
+				step = key+'--'
+			else
+				StepType STEP_TYPES.NUMBER
+				step = "#key += #stepcode "				
+		catch e			
+			StepType = STEP_TYPES.UNKNOWN
+			step = "#from <#to ? #key += #Step.GetCode(0,tabsin)  : #key -= #stepcode "
+
+		<- "#Tabs(tabs) for (var #key  = #from  ; #end  ; #step  ) #Body.GetCode(tabs,tabsin) "
+
+	SetParent (parent) ->
+		super		
+		Key.SetParent this
+		From.SetParent this
+		To.SetParent this
+		Step.SetParent this
+		Body.SetParent this
+
+	GetLocalVars ->
+		res = From.GetLocalVars()	
+		res = res.concat To.GetLocalVars()
+		res = res.concat Step.GetLocalVars()
+		res = res.concat Body.GetLocalVars()
+		<- res
+
+	TransformAST (locals,classNames) ->
+		Key.TransformAST locals, classNames
+		From.TransformAST locals, classNames
+		To.TransformAST locals, classNames
+		Step.TransformAST locals, classNames
+		Body.TransformAST locals, classNames
+	
+	GetMappings ->
+		from = From.GetMappings()
+		to = To.GetMappings()
+		key = Key.GetMappings()
+
+		skip1 = CloneObj Loc
+		skip1.fromColumn = 0
+		skip2 = CloneObj skip1
+		skip2.toColumn++
+
+		skip3 = CloneObj skip2
+		skip3.toColumn++
+		
+		unless NumberRanges		
+			if Inclusive
+				end = from.concat [(CloneObj skip1)], to, [(CloneObj skip2)], key, [(CloneObj skip2)], to, [(CloneObj skip3)], key, [(CloneObj skip2)], to
+				#end = "#from <#to ? #key <=#to  : #key >=#to "
+			else
+				end = from.concat [(CloneObj skip1)], to, [(CloneObj skip2)], key, [(CloneObj skip1)], to, [(CloneObj skip3)], key, [(CloneObj skip1)], to
+				#end = "#from <#to ? #key <#to  : #key >#to "
+		else
+			if Inclusive
+				end = key.concat [(CloneObj skip3)], to
+				###if f < t
+					end = "#key <= #to "
+				else
+					end = "#key >= #to "
+				###
+			else
+				end = key.concat [(CloneObj skip2)], to
+				###if f < t
+					end = "#key < #to "
+				else
+					end = "#key > #to "	
+				###
+			
+
+		stepcode = Step.GetMappings()
+
+		switch StepType
+			case STEP_TYPES.POSITIVE, STEP_TYPES.NEGATIVE
+				step = key.concat [(CloneObj skip2)]
+			case STEP_TYPES.NUMBER
+				step = key.concat [(CloneObj skip3)], stepcode
+			case STEP_TYPES.UNKNOWN
+				step = from.concat [(CloneObj skip1)], to, [(CloneObj skip2)], key, [(CloneObj skip3)], Step.GetMappings(), [(CloneObj skip3)], key, [(CloneObj skip3)], stepcode
+
+		Loc.toColumn = 9
+		<- [Loc].concat key, [(CloneObj skip3)], from, [(CloneObj skip3)], end, [(CloneObj skip3)], step, [(CloneObj skip3)], Body.GetMappings()
+		#<- "#Tabs(tabs) for (var #key  = #from  ; #end  ; #step  ) #Body.GetCode(tabs,tabsin) "
+
+
+	
+Funcs.ForRange = ForRange	
+
+class Switch : AstNode
+	Condition,Cases,TabsIn
+	init (condition,cases,loc) ->		# [ [[Exp1,Exp2],Body], [[Exp],Body], [Body]  ]
+		super loc		
+		Condition = condition
+		Cases = cases			
+
+	GetCode (tabs,tabsin) ->
+		TabsIn = tabs
+		cases = ''
+
+		for opt in Cases
+			if opt.length is 1
+				cases +='\n'+Tabs(tabs+1)+'default: '+opt[0].GetCode 0,tabsin+1										
+			else				
+				for exp in opt[0]					
+					cases +='\n'+Tabs(tabs+1)+'case '+(exp.GetCode 0,tabsin)+": "					
+
+				cases += opt[1].GetCode 0,tabsin+1
+				if opt[1].Body.length <= 1
+					cases += '; \tbreak;'
+				else
+					cases += '\n'+Tabs(tabs+2)+'break;'
+
+
+		<- Tabs(tabs)+'switch( '+Condition.GetCode(0,tabsin)+' ) {'+cases+'\n}'
+
+	SetParent (parent) ->
+		super		
+		Condition.SetParent this
+
+		for c in Cases
+			if c[1]		
+				c[1].SetParent this
+
+				this.SetChildParents c[0]
+			else
+				c[0].SetParent this
+
+	GetLocalVars ->
+		res = Condition.GetLocalVars()	
+
+		for c in Cases
+			if c[1]						
+				res = res.concat c[1].GetLocalVars()
+				res = res.concat this.GetChildLocalVars c[0]					
+			else
+				res = res.concat c[0].GetLocalVars()
+
+		<- res
+
+	TransformAST (locals,classNames) ->
+		super		
+		Condition.TransformAST locals,classNames
+
+		for c in Cases
+			if c[1]		
+				c[1].TransformAST locals, classNames
+
+				this.TransformASTInChild c[0], locals, classNames
+			else
+				c[0].TransformAST locals, classNames
+
+	GetMappings ->
+		cases = []
+
+		skipTab = CloneObj Loc[0]
+		skipTab.fromLine = 1
+		skipTab.toColumn = TabsIn+1
+		skipTab2 = CloneObj skipTab
+		skipTab2.toColumn++
+
+		cases = []
+
+		for opt in Cases
+			if opt.length is 1
+				def = CloneObj skipTab
+				def.toColumn = 9
+				cases = cases.concat [def], opt[0].GetMappings()
+				#cases +='\n'+Tabs(tabs+1)+'default: '+opt[0].GetCode 0,tabsin+1					
+			else				
+				for exp in opt[0]					
+					cas = CloneObj skipTab
+					cas.toColumn = 6
+					col = CloneObj Loc[0]
+					col.toColumn = 2
+					cases = cases.concat [cas], exp.GetMappings(), [col]
+					#cases +='\n'+Tabs(tabs+1)+'case '+(exp.GetCode 0,tabsin)+": "					
+
+				cases = cases.concat opt[1].GetMappings()
+				#cases += opt[1].GetCode 0,tabsin+1
+				if opt[1].Body.length <= 1
+					brea = CloneObj Loc[0]
+					brea.toColumn = 10
+					cases = cases.concat [brea]
+					#cases += '; \tbreak;'
+				else
+					skipTab2.toColumn += 6
+					cases = cases.concat [skipTab2]
+					#cases += '\n'+Tabs(tabs+2)+'break;'
+
+		Loc[0].fromColumn += TabsIn
+		Loc[0].toColumn = 8
+		Loc[1].toColumn = 3
+		Loc[2].fromLine++
+		<- [Loc[0]].concat Condition.GetMappings(), [Loc[1]], cases, [Loc[2]] 
+		#<- Tabs(tabs)+'switch( '+Condition.GetCode(0,tabsin)+' ) {'+cases+'\n}'
+
+Funcs.Switch = Switch
+
+class Try : AstNode
+	Body,Err,CatchBody,FinalBody
+	init (body,err,catchBody,finalBody,loc) ->
+		super loc
+		Body = body
+		Err = err
+		CatchBody = catchBody
+		FinalBody = finalBody
+
+	GetCode (tabs,tabsin) ->
+		Loc[0].fromColumn += tabs
+
+		catchcode = ''
+		finalcode = ''
+		
+		if CatchBody
+			CatchBody.Inline = no
+			catchcode = "\n#Tabs(tabs) catch(#Err.GetCode(0,tabsin) ) #CatchBody.GetCode(0,tabsin) "
+
+		if FinalBody
+			FinalBody.Inline = no
+			finalcode = "\n#Tabs(tabs) finally #FinalBody.GetCode(0,tabsin) "
+
+		Body.Inline = no
+
+		<- "#Tabs(tabs) try #Body.GetCode(0,tabsin) #catchcode #finalcode "
+
+	SetParent (parent) ->
+		super
+		Err.SetParent this 	if Err	
+		Body.SetParent this			
+		CatchBody.SetParent this 	if CatchBody
+		FinalBody.SetParent this 	if FinalBody
+		
+
+	GetLocalVars ->
+		res = []	
+
+		res = res.concat CatchBody.GetLocalVars() 	if CatchBody
+		res = res.concat FinalBody.GetLocalVars() 	if FinalBody
+		res = res.concat Body.GetLocalVars()
+		<- res
+
+	TransformAST (locals,classNames) ->
+		Err.TransformAST locals, classNames 	if Err	
+		Body.TransformAST locals, classNames
+		CatchBody.TransformAST locals, classNames 	if CatchBody
+		FinalBody.TransformAST locals, classNames 	if FinalBody			
+
+	GetMappings ->
+		catchcode = []
+		finalcode = []
+		
+		if CatchBody
+			paren = CloneObj Loc[1]
+			paren.toColumn = 2
+			Loc[1].fromLine++	if Body.Body.length > 0
+			Loc[1].fromColumn = Loc[0].fromColumn
+			Loc[1].toColumn = 6
+			catchcode = [Loc[1]].concat Err.GetMappings(), [paren], CatchBody.GetMappings()
+			#catchcode = "\n#Tabs(tabs) catch(#Err.GetCode(0,tabsin) ) #CatchBody.GetCode(0,tabsin) "
+
+		if FinalBody
+			Loc[2].fromLine++	if (CatchBody and CatchBody.Body.length > 0) or (not CatchBody and Body.Body.length > 0)
+			Loc[2].fromColumn = Loc[0].fromColumn
+			Loc[2].toColumn = 8
+			finalcode = [Loc[2]].concat FinalBody.GetMappings()
+			#finalcode = "\n#Tabs(tabs) finally #FinalBody.GetCode(0,tabsin) "
+
+		Loc[0].toColumn = 4
+		<- [Loc[0]].concat Body.GetMappings(), catchcode, finalcode
+		#<- "#Tabs(tabs) try #Body.GetCode(0,tabsin) #catchcode #finalcode "
+
+Funcs.Try = Try
+
+
+class With : AstNode
+	Exp,Body
+	init (exp,body,loc) ->		
+		super loc
+		Exp = exp		
+		Body = body
+	
+	GetCode (tabs,tabsin) ->		
+		Loc.fromColumn += tabs
+		<- Tabs(tabs)+'with( '+Exp.GetCode(0,tabsin)+' ) '+Body.GetCode tabs,tabsin
+
+	SetParent (parent) ->
+		super		
+		Exp.SetParent this
+		Body.SetParent this
+
+	GetLocalVars ->		
+		res = Exp.GetLocalVars()		
+		<- res.concat Body.GetLocalVars()
+
+	TransformAST (locals,classNames) ->
+		Exp.TransformAST locals, classNames
+		Body.TransformAST locals, classNames	
+
+	GetMappings ->
+		end = CloneObj Loc
+		end.fromColumn = 0
+		end.toColumn = 3
+		Loc.toColumn = 6
+		<- [Loc].concat Exp.GetMappings(), [end], Body.GetMappings()
+
+Funcs.With = With		
+
+class Call : AstNode
+	Left,Params,LocCommas
+	init (left,params,loc) ->		
+		super loc
+		Left = left
+	
+		Params = []
+		LocCommas = []
+		for p,k,i in params
+			Params.push p[0]
+			LocCommas.push p[1] 	if i>0
+	
+	GetCode (tabs,tabsin) ->
+		paramsCode = ''
+
+		for p,k,i in Params
+			paramsCode +=', '	if i>0
+			paramsCode += p.GetCode 0,tabsin
+
+		<- Left.GetCode(tabs,tabsin)+'('+paramsCode+')'
+
+	SetParent (parent) ->
+		super		
+		Left.SetParent this
+		this.SetChildParents Params		
+
+	GetLocalVars ->		
+		res = Left.GetLocalVars()		
+		<- res.concat this.GetChildLocalVars Params			
+
+	TransformAST (locals,classNames) ->
+		Left.TransformAST locals, classNames
+		this.TransformASTInChild Params, locals, classNames
+
+	GetMappings ->					
+		left = Left.GetMappings()
+
+		par = []
+		for p,k,i in Params
+			par = par.concat p.GetMappings()
+			
+			if i < Params.length-1
+				LocCommas[i].fromLine = LocCommas[i].toLine = 0
+				LocCommas[i].fromColumn = 0
+				LocCommas[i].toColumn = 2
+				par.push LocCommas[i]
+
+		<- left.concat [Loc[0]], par, [Loc[1]]
+
+
+Funcs.Call = Call		
+
+class Arra : AstNode
+	Elements
+	init (elements,loc) ->		
+		super loc
+		Elements = elements
+		
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn += tabs
+
+		elementsCode = ''
+
+		for e,i in Elements
+			elementsCode +=', '	if i>0
+			elementsCode += e.GetCode 0,tabsin
+
+		<- Tabs(tabs)+'['+elementsCode+']'
+
+	SetParent (parent) ->
+		super		
+		
+		this.SetChildParents Elements
+
+	GetLocalVars ->		
+		<- this.GetChildLocalVars Elements
+
+	TransformAST (locals,classNames) ->
+		this.TransformASTInChild Elements, locals, classNames
+
+	GetMappings ->
+		elementsCode = []
+
+		for e,i in Elements
+			if i > 0
+				com = CloneObj Loc
+				com.fromColumn = 0
+				com.toColumn = 2
+				elementsCode = elementsCode.concat com
+				#elementsCode +=', '	if i>0
+			elementsCode = elementsCode.concat e.GetMappings()
+			#elementsCode += e.GetCode 0,tabsin
+
+		end = CloneObj Loc
+		end.fromColumn = 0
+
+		<- [Loc].concat elementsCode, end
+		#<- Tabs(tabs)+'['+elementsCode+']'
+
+Funcs.Arra = Arra
+
+
+class Objt : AstNode
+	Elements,TabsIn
+	init (elements,loc) ->		
+		super loc
+		Elements = elements
+		
+	GetCode (tabs,tabsin) ->
+		TabsIn = [tabs,tabsin]
+
+		elementsCode = ''
+		for e,i in Elements			
+			elementsCode +=', '	if i>0
+			elementsCode += '\n'+Tabs(tabsin+1)+e[0].GetCode(0,tabsin)+' : '+e[1].GetCode(0,tabsin+1)
+
+		<- Tabs(tabs)+'{'+elementsCode+(Elements.length>0 ? '\n' : '')+Tabs(tabsin)+'}'
+
+	SetParent (parent) ->
+		super		
+		
+		for e in Elements
+			e[0].SetParent this
+			e[1].SetParent this
+
+	GetLocalVars ->	
+		res = []
+		for e in Elements
+			res = res.concat e[0].GetLocalVars()
+			res = res.concat e[1].GetLocalVars()
+			
+		<- res
+
+	TransformAST (locals,classNames) ->
+		for e in Elements
+			e[0].TransformAST locals, classNames
+			if e[0].Type is 'Tag'
+				e[0].IsClassStatic = no
+				e[0].IsClassProp = no
+			e[1].TransformAST locals, classNames
+
+	GetMappings ->
+		elementsCode = []
+		for e,i in Elements		
+			if i > 0
+				com = CloneObj Loc
+				com.toColumn = 2
+				elementsCode = elementsCode.concat com	
+				#elementsCode +=', '	if i>0
+			start = CloneObj Loc
+			start.fromLine = 1
+			start.fromColumn = TabsIn[1]+1
+			start.toColumn = 0
+			col = CloneObj Loc
+			col.toColumn = 3
+			elementsCode = elementsCode.concat start, e[0].GetMappings(), col, e[1].GetMappings()
+			#elementsCode += '\n'+Tabs(tabsin+1)+e[0].GetCode(0,tabsin)+' : '+e[1].GetCode(0,tabsin+1)
+
+		skip = CloneObj Loc
+		skip.toLine++
+		skip.toColumn = 0
+		end = CloneObj Loc
+		end.fromColumn +=TabsIn[1]			
+		Loc.fromColumn += TabsIn[0]
+
+		<- [Loc].concat elementsCode, (Elements.length>0 ? skip : []), end
+		#<- Tabs(tabs)+'{'+elementsCode+(Elements.length>0 ? '\n' : '')+Tabs(tabsin)+'}'
+
+Funcs.Objt = Objt
+
+class Return : AstNode
+	Exp
+	init (exp,loc) ->		
+		super loc
+		Exp = exp		
+	
+	GetCode (tabs,tabsin) ->	
+		Loc.fromColumn = tabs	
+		<- res = Tabs(tabs)+'return'+(Exp? ' '+Exp.GetCode(0,tabsin) : '')+';'
+
+	SetParent (parent) ->
+		super		
+		
+		Exp.SetParent this 		if Exp
+
+	GetLocalVars ->		
+		res = []
+		res = Exp.GetLocalVars()		if Exp
+		<- res
+
+	TransformAST (locals, classNames) ->
+		Exp.TransformAST locals, classNames 		if Exp
+
+	GetMappings ->
+		end = CloneObj Loc
+		end.fromColumn = 0
+		end.toColumn = 1
+		Loc.toColumn = 6
+		if Exp
+			Loc.toColumn++
+			<- [Loc].concat Exp.GetMappings(), end
+		else
+			<- [Loc].concat end
+
+Funcs.Return = Return
+
+class Property : AstNode
+	Left,Right
+	init (left,right,loc) ->
+		super loc	
+		Left = left
+		Right = right
+	
+	GetCode (tabs,tabsin) ->			
+		<- Left.GetCode(tabs,tabsin)+'.'+Right.GetCode(0,tabsin)
+
+	SetParent (parent) ->
+		super		
+		
+		Left.SetParent this
+		Right.SetParent this
+
+	GetLocalVars ->		
+		res = Left.GetLocalVars()		
+		<- res.concat Right.GetLocalVars()
+
+	TransformAST (locals,classNames) ->
+		Left.TransformAST locals, classNames
+		Right.TransformAST locals, classNames
+
+	GetMappings ->
+		<- Left.GetMappings().concat Loc, Right.GetMappings()
+
+Funcs.Property = Property
+
+class Index : AstNode
+	Left,Right
+	init (left,right,loc) ->
+		super loc	
+		Left = left
+		Right = right
+	
+	GetCode (tabs,tabsin) ->			
+		<- Left.GetCode(tabs,tabsin)+'['+Right.GetCode(0,tabsin)+']'
+
+	SetParent (parent) ->
+		super		
+		
+		Left.SetParent this
+		Right.SetParent this
+
+	GetLocalVars ->		
+		res = Left.GetLocalVars()		
+		<- res.concat Right.GetLocalVars()
+
+	TransformAST (locals, classNames) ->
+		Left.TransformAST locals, classNames
+		Right.TransformAST locals, classNames
+
+	GetMappings ->
+		<- Left.GetMappings().concat [Loc[0]], Right.GetMappings(), [Loc[1]]
+
+Funcs.Index = Index
+
+class Assignament : AstNode
+	Left,Right,Op
+	init (left,op,right,loc) ->
+		super loc	
+		Left = left
+		Right = right
+		Op = op
+	
+	GetCode (tabs,tabsin) ->
+		<- Left.GetCode(tabs,tabsin)+' '+Op.GetCode(0,tabsin)+' '+Right.GetCode(0,tabsin)
+
+	SetParent (parent) ->
+		super		
+		
+		Left.SetParent this		
+		Op.SetParent this
+		Right.SetParent this
+
+	GetLocalVars ->		
+		res = Left.GetLocalVars()		
+		<- res.concat Right.GetLocalVars()
+
+	TransformAST (locals,classNames) ->
+		Left.TransformAST locals, classNames		
+		Op.TransformAST locals, classNames
+		Right.TransformAST locals, classNames
+
+	GetMappings ->					
+		left = Left.GetMappings()
+
+		op = Op.GetMappings()			
+		op[0].toColumn += 2
+		
+		right = Right.GetMappings()			
+
+		<- left.concat op.concat right
+		
+Funcs.Assignament = Assignament	
+
+class Throw : AstNode
+	Exp
+	init (exp,loc) ->
+		super loc	
+		Exp = exp			
+	
+	GetCode (tabs,tabsin) ->
+		<- this.Tabs(tabs)+"throw #{ (Exp ? Exp.GetCode(0,tabsin) : '') };"
+
+	SetParent (parent) ->
+		super
+
+		Exp.SetParent this
+
+	GetLocalVars ->		
+		<- res = Exp.GetLocalVars()	
+
+	TransformAST (locals,classNames) ->
+		Exp.TransformAST locals, classNames
+
+Funcs.Throw = Throw
+
+class Exp : AstNode
+	Child
+	init (child,loc) ->
+		super loc	
+		Child = child	
+	
+	GetCode (tabs,tabsin) ->
+		if typeof Child is 'string'
+			<- this.Tabs(tabs)+Child
+		else
+			<- Child.GetCode tabs,tabsin
+
+	SetParent (parent) ->
+		super
+
+		Child.SetParent this
+
+	GetLocalVars ->		
+		<- Child.GetLocalVars()		
+
+	TransformAST (locals,classNames) ->
+		Child.TransformAST locals, classNames		
+
+Funcs.Exp = Exp
+
+class Paren : AstNode
+	Child
+	init (child,loc) ->
+		super loc	
+		Child = child	
+	
+	GetCode (tabs,tabsin) ->
+		<- this.Tabs(tabs)+'('+Child.GetCode(0,tabsin)+')'
+
+	SetParent (parent) ->
+		super
+
+		Child.SetParent this
+
+	GetLocalVars ->		
+		<- Child.GetLocalVars()		
+
+	TransformAST (locals,classNames) ->
+		Child.TransformAST locals, classNames
+
+	GetMappings ->						
+		<- [Loc[0]].concat Child.GetMappings(), [Loc[1]]
+
+Funcs.Paren = Paren
+
+class Boolean : AstNode
+	Value
+	init (value,loc) ->
+		super loc		
+		Value = value
+	
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn += tabs			
+		if Value is 'true' or Value is 'yes'
+			val = 'true'
+			Loc.toColumn = 4
+		else
+			val = 'false'
+			Loc.toColumn = 5
+		<- Tabs(tabs)+val
+
+Funcs.Boolean = Boolean		
+
+
+class Exist : AstNode
+	Exp
+	init (exp,loc) ->
+		super loc		
+		Exp = exp
+	
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn = tabs
+
+		if Exp.Type is 'Tag'
+			<- Tabs(tabs)+"(typeof #Exp.GetCode(0,tabsin)  !== 'undefined' && #Exp.GetCode(0,tabsin)  !== null)"
+		else
+			<- Tabs(tabs)+"#Exp.GetCode(0,tabsin)  != null"	
+		
+	SetParent (parent) ->
+		super
+
+		Exp.SetParent this
+
+	TransformAST (locals,classNames) ->
+		Exp.TransformAST locals, classNames
+
+	GetMappings ->
+		if Exp.Type is 'Tag'
+			pre = CloneObj Loc
+			pre.toColumn = 8
+
+			exp = Exp.GetMappings()
+
+			mid = CloneObj Loc
+			mid.toColumn = 20
+
+			post = Loc
+			post.toColumn = 10
+
+			<- [pre].concat exp, mid, exp, post
+		else
+			Loc.toColumn = 8
+			<- Exp.GetMappings().concat [Loc]
+
+	GetMappings ->
+		if Exp.Type is 'Tag'
+			Loc.toColumn = 8
+			exp = Exp.GetMappings()
+			med = CloneObj Loc
+			med.fromColumn = 0
+			med.toColumn = 20
+			end = CloneObj med
+			end.toColumn = 10
+			<- [Loc].concat exp, [med], (CloneObj exp), [end]
+			#<- Tabs(tabs)+"(typeof #Exp.GetCode(0,tabsin)  !== 'undefined' && #Exp.GetCode(0,tabsin)  !== null)"
+		else				
+			end = CloneObj Loc
+			end.fromColumn = 0
+			end.toColumn = 3				
+			exp = Exp.GetMappings()
+			exp[0].fromColumn += Loc.fromColumn
+			<- exp.concat [end]
+			#<- Tabs(tabs)+"#Exp.GetCode(0,tabsin)  != null"
+
+Funcs.Exist = Exist
+
+class Export : AstNode
+	Child,Name
+	init (child,name,loc) ->
+		super loc
+		Child = child
+		Name = name
+	
+	GetCode (tabs,tabsin) ->
+		Loc.fromColumn = tabs
+
+		if Child.Type is 'Class'	
+			<- Child.GetCode(tabs,tabsin)+Tabs(tabs)+'Export.'+Name+' = '+Name
+		else
+			<- Tabs(tabs)+'Export.'+Name+' = '+Child.GetCode(0,tabsin)
+
+	SetParent (parent) ->
+		super
+
+		Child.SetParent this
+
+	TransformAST (locals,classNames) ->
+		Child.TransformAST locals, classNames
+		unless Name
+			if Child.Type is 'Class'				
+				Name = Child.Name.Value
+			else Child.Type is 'Assignament'				
+				Name = Child.Left.Value
+			else
+				Name = 'default'
+		classNames.Document.HasExports = yes
+
+	GetMappings ->
+		if Child.Type is 'Class'	
+			Loc.toColumn = 7 + Name.length*2 + 3
+			<- Child.GetMappings().concat [Loc]
+			#<- Child.GetCode(tabs,tabsin)+Tabs(tabs)+'Export.'+Name+' = '+Name
+		else
+			Loc.toColumn = 7 + Name.length + 3
+			<- [Loc].concat Child.GetMappings()
+			#<- Tabs(tabs)+'Export.'+Name+' = '+Child.GetCode(0,tabsin)
+
+Funcs.Export = Export
+
+class Import : AstNode
+	Path,Vars
+	init (path,vars,loc) ->
+		super loc
+		Path = path
+		Vars = vars
+	
+	GetCode (tabs,tabsin) ->	
+		Loc.fromColumn += tabs
+
+		if Vars.length is 1
+			if Vars[0][1]?
+				vars = Vars[0][1]
+			else
+				vars = Vars[0][0]
+			<- "#Tabs(tabs) #vars  = (yield Metab.ImportFromFile(\"#this.Document.File \",#Path )).#Vars[0][0] ;"
+		else
+			vars = ''
+			for v in Vars
+				vars += ', ' 	if vars.length > 0
+
+				if v[1]?
+					vars += v[0]+' : '+v[1]
+				else
+					vars += v[0]
+			
+			<- "#Tabs(tabs) {#vars } = yield Metab.ImportFromFile(\"#this.Document.File \",#Path );"
+	TransformAST (locals,classNames) ->		
+		if classNames.Function
+			classNames.Function.HasAwaits = yes 	
+		else			
+			classNames.Document.HasAwaits = yes		
+
+		this.Document = classNames.Document
+
+	GetLocalVars ->
+		unless Vars	
+			parts = Path.substr(1,Path.length-2).split '/'			
+			parts = parts[parts.length-1].split '.'
+			if parts.length > 1
+				parts.pop()
+
+			parts = parts.join('.')
+			Vars = [['default',parts]]
+
+
+		res = []
+		for v in Vars
+			if v[1]
+				res.push v[1]
+			else
+				res.push v[0]		
+		
+		<- res
+	GetMappings ->
+		<- [Loc]		
+
+Funcs.Import = Import
+
+
+class LocalVar : AstNode
+	Names, Value
+	init (names,value,loc) ->
+		super loc
+		Names = names
+		Value = value
+	
+	GetCode (tabs,tabsin) ->
+		if Value
+			<- this.Tabs(tabs)+"var "+Names+" = "+Value
+		else
+			<- this.Tabs(tabs)+"var "+Names+";"
+
+Funcs.LocalVar = LocalVar		

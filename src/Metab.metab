@@ -1,0 +1,419 @@
+# Metab Language
+# Author: Amefy
+# Copyright (c) 2016 Amefy under license Apache-2.0
+# Language created with Jison, Copyright (c) 2009-2014 by Zachary Carter (https://github.com/zaach/jison) and based on Coffeescript, Copyright (c) 2009-2015 Jeremy Ashkenas (https://github.com/jashkenas/coffeescript)
+# Options:
+#		inlineMaps: yes | no , default yes	 	generate inline sourcemaps
+#		externalMaps: yes | no , default no		generate path for sourcemaps
+#		ast: yes | no , default no 				generate AST
+
+ 
+class JisonLexer
+	tokens,yytext,yyloc,yylloc,pos,yyleng,yylineno
+
+	setInput (_tokens) ->
+		tokens = _tokens
+		pos = 0
+	lex ->
+		t = tokens[pos++]
+
+		if t isnt '0'				
+			tag = t[0]
+			yyleng = yytext = t[1]				
+			yylloc = yyloc = t[2]
+			yylineno = t[2].first_line
+		else
+			tag = ''
+		<- tag
+
+
+preparser.lexer = new JisonLexer
+parser.lexer = new JisonLexer
+
+#add coder functions
+preparser.yy = parser.yy = Functions
+
+
+class Metab
+	static Imports = {}	
+	static SourceMaps = {}
+	static r = null
+	static isBrowser = window?
+	static isNode = global? and module?
+
+	static GetPreTokens (code,cb,ce) ->		
+		try
+			cb lexer.Parse code
+		catch e
+			ce "Lexer in "+path+': '+e.toString()
+
+	static GetTokens (code,cb,ce) ->
+		GetPreTokens code, (tokens) ->
+			try
+				preparser.tokens = tokens
+				res = preparser.parse tokens
+				res = Functions.Unchild Functions.CloseCalls res
+				cb Functions.RemoveSpaces res
+			catch e
+				ce "Preparser in "+path+': '+e.toString()
+		, ce
+
+	static GetAST (code,path,cb,ce,options) ->
+		try
+			tokens = lexer.Parse code		
+		catch e
+			<- ce "Lexer in "+path+': '+e.toString()
+
+		try
+			preparser.tokens = tokens
+			tokens = preparser.parse tokens
+		catch e
+			<- ce "Preparser in "+path+': '+e.toString()
+
+		tokens = Functions.Unchild Functions.CloseCalls tokens
+		tokens = Functions.RemoveSpaces tokens
+
+		try 
+			parser.tokens = tokens
+			nodes = parser.parse tokens
+
+			nodes.ProcessAST path, ((frome,filee,cbe,cee)->
+				OnImportMetadata frome,filee,cbe,cee,options
+			), (->
+				cb nodes
+			), (err) ->
+				console.error err
+		catch e
+			<- ce "Parse in "+path+': '+e.toString()
+
+	static GetASTSync (code,path,options) ->
+		try
+			tokens = lexer.Parse code		
+		catch e
+			throw "Lexer in "+path+': '+e.toString()
+
+		try
+			preparser.tokens = tokens
+			tokens = preparser.parse tokens
+		catch e
+			throw "Preparser in "+path+': '+e.toString()
+
+		tokens = Functions.Unchild Functions.CloseCalls tokens
+		tokens = Functions.RemoveSpaces tokens
+
+		try 
+			parser.tokens = tokens
+			nodes = parser.parse tokens
+
+			nodes.ProcessASTSync path, (frome,filee) ->
+				OnImportMetadataSync frome,filee,options
+
+			<- nodes
+		catch e
+			throw "Parse in "+path+': '+e.toString()
+	
+	static Compile (code,path,cb,ce,options=null) ->		
+		options = DefaultOptions()	if options is null
+		GetAST code,path, ((nodes)->
+			nodes.GetCode 0, 0, path, ((codeJS) ->
+				cb AddMappings code, path, codeJS, nodes, options				
+			), ce
+		), ce, options
+
+	static CompileSync (code,path,options=null) ->
+		options = DefaultOptions()	if options is null
+		nodes = GetASTSync code, path, options
+		codeJS = nodes.GetCodeSync 0, 0, path
+
+		<- AddMappings code, path, codeJS, nodes, options
+
+	static AddMappings (code,path,codeJS,nodes,options) ->
+		maps = nodes.GetMappings()
+		if options.inlineMaps or options.externalMaps
+			smaps = new MetabSourceMaps
+			smaps.StartSourceMap()
+			smaps.ProcessMappings maps
+			if options.externalMaps
+				SourceMaps[path] = smaps
+				codeJS += "\n//# sourceURL="+path
+			else
+				stringmap = JSON.stringify(smaps.GetSourceMap path,code,path.substr(0,path.lastIndexOf('.metab'))+'.js')				
+				codeJS += "\n//# sourceMappingURL=data:application/json;base64,"+ ( isBrowser? btoa(stringmap) : (new Buffer(stringmap).toString('base64')) )
+		
+		<- codeJS 
+
+	static OnImportMetadata (from,file,cb,ce,options) ->
+		fromPath = path.dirname from
+		options.ast = yes
+		ImportFile fromPath,file,cb,ce,options
+
+	static OnImportMetadataSync (from,file,options) ->
+		fromPath = path.dirname from
+		options.ast = yes
+		ImportFileSync fromPath,file,options
+
+	static Run (code) ->
+		r = null
+		eval code
+
+	static FileExist (file,cb,ce) ->
+		fs.stat file, (err,stats) ->
+			if err
+				ce err
+			else stats.isFile()
+				cb yes
+			else
+				ce file+' isnt file'
+
+	static FileExistSync (file) ->
+		try
+			stats = fs.statSync file
+			<- stats.isFile()
+		catch err
+			<- no			
+
+	static Resolve (from,file,cb,ce) ->
+		ext = path.extname file
+		unless ext in ['.metab','.mson']
+			f = path.resolve from, file+'.metab'
+			FileExist f, ->
+				cb f
+			, (e) ->
+				f = path.resolve from, file+'.mson'
+				FileExist f, ->
+					cb f
+				, ->
+					ce e
+		else
+			f = path.resolve from, file
+			FileExist f, ->
+				cb path.resolve f
+			, ce
+
+	static ResolveSync (from,file) ->
+		ext = path.extname file
+		unless ext in ['.metab','.mson']
+			f = path.resolve from, file+'.metab'
+
+			if FileExistSync f
+				<- f
+			else 
+				f = path.resolve from, file+'.mson'
+				if FileExistSync f
+					<- f
+				else
+					throw 'cannot read '+f
+		else
+			f = path.resolve from, file
+			if FileExistSync f
+				<- path.resolve f
+			else
+				throw 'cannot read '+f
+
+
+	static Import (file,cb,ce,options=null) ->		
+		options = DefaultOptions()	if options is null
+		ImportFile '.',file, (finalFile,res) ->
+			cb res
+		, ce, options
+
+	static ImportFile (from,file,cb,ce,options=null) ->
+		options = DefaultOptions()	if options is null
+		Resolve from,file, (finalFile) ->
+			if options.ast
+				LoadAndGetAST finalFile, ((ast) ->
+					cb ast
+				), ce, options
+			else
+				if Imports[finalFile]?
+					ImportFromCache finalFile, cb, ce				
+				else
+					Imports[finalFile] = {
+						Load: new Promise (cbp,cep) ->
+							LoadAndCompileFile finalFile, ((code) ->															
+								try
+									Run code
+
+									metabr = r
+									if typeof metabr is 'function'
+										res = metabr()
+										
+										if res instanceof Promise
+											res.then((rr) ->			
+												res = Metab.FindDefault rr
+												cb finalFile, res					
+												cbp res	
+											).catch (e) ->
+												ce e
+												<- cep e
+										else	
+											res = Metab.FindDefault res											
+											cb finalFile, res
+											cbp res
+									else
+										res = Metab.FindDefault metabr
+										cb finalFile, res
+										cbp res
+								catch e
+									ce e
+									<- cep e
+							), ((err) ->
+								ce err
+								cep err	
+							), options
+						
+					}
+		, (e) ->
+			console.info 'ERROR'
+			console.info e
+			ce e
+
+	static ImportFileSync (from,file,options=null) ->
+		options = DefaultOptions()	if options is null
+		finalFile = ResolveSync from,file
+		if options.ast
+			<- LoadAndGetASTSync finalFile, options
+		else			
+			throw 'TODO: import sync'
+		
+
+	static ImportFromCache (file, cb, ce) ->
+		Imports[file].Load.then (rr) ->
+			cb file, rr
+
+	static LoadAndCompileFile (file,cb,ce,options) ->
+		fs.readFile file, 'utf8', (err,code) ->
+			if err
+				ce err
+			else
+				if file.indexOf('.mson') isnt -1
+					code = 'export {'+code+'\n}'
+
+				Compile code, file, cb, ce, options
+
+	static LoadAndCompileFileSync (file,options) ->
+		code = fs.readFileSync file, 'utf8'			
+
+		if file.indexOf('.mson') isnt -1
+			code = 'export {'+code+'\n}'
+
+		<- CompileSync code, file, options
+
+	static LoadAndGetAST (file,cb,ce,options) ->
+		fs.readFile file, 'utf8', (err,code) ->
+			if err
+				ce err
+			else
+				if file.indexOf('.mson') isnt -1
+					code = 'export {'+code+'\n}'
+
+				GetAST code, file, cb, ce, options
+
+	static LoadAndGetASTSync (file,cb,ce,options) ->
+		code = fs.readFileSync file, 'utf8'		
+
+		if file.indexOf('.mson') isnt -1
+			code = 'export {'+code+'\n}'
+
+		<- GetASTSync code, file, options
+
+				
+	static ImportFromFile (from,file,options=null) -->
+		options = DefaultOptions()	if options is null
+		fromPath = path.dirname from
+		Metab.ImportFile fromPath,file, (finalFile,res) ->
+			cb res
+		, ce, options
+
+	static FindDefault (exports) ->
+		exports = {}	unless exports?
+		unless exports.default?
+			for e,i in exports				
+				exports.default = e
+				break
+
+		<- exports
+
+	static ConvertCodePosition (file,line,col) ->
+		smaps = SourceMaps[file]
+		if smaps
+			<- smaps.ConvertCodePosition line, col
+
+		<- [line,col]
+
+	static DefaultOptions ->
+		if isNode
+			<- {externalMaps:yes}
+		else
+			<- {inlineMaps: yes}
+
+	static GetErrorLines (file,line,col) ->
+		res = '\n    '
+		
+		i = 0
+		l = 1		
+
+		try
+			read = fs.readFileSync file,'utf8'
+
+			while l < (line - 2)
+				l++		if read[i] is '\n'
+				i++
+
+			while l < (line + 2) and i < read.length
+				res += read[i]
+				if read[i] is '\n'
+					l++		
+					if l is line
+						res += '--> '
+					else	
+						res += '    '
+				i++
+
+			res += '\n'		if res[res.length-1] isnt '\n'
+			res += '\n'
+
+		catch e
+			#cannot read file
+
+
+		<- res
+
+
+if Metab.isBrowser
+	window.Metab = Metab
+else Metab.isNode
+	fs = require 'fs'
+	path = require 'path'
+
+	module.exports = global.Metab = Metab
+
+	#line and column conversion for node
+	Error.prepareStackTrace = (error,trace) ->		
+		res = error+'\n'
+
+		firstFile = yes
+		for tra in trace
+			file = tra.isEval()?tra.getEvalOrigin():tra.getFileName()
+
+			unless file is 'native generator.js'
+				ext = path.extname file
+				if ext is '.metab'
+					[line,col] = Metab.ConvertCodePosition file, tra.getLineNumber(), tra.getColumnNumber()
+				else
+					line = tra.getLineNumber()
+					col = tra.getColumnNumber()
+
+				if firstFile
+					firstFile = no
+					res += Metab.GetErrorLines file,line,col
+
+				if tra.isConstructor()
+					loc = "new #tra.getFunctionName() "
+				else
+					loc = "#tra.getTypeName() .#tra.getFunctionName() "
+
+				res += "\t-> #loc  (#file ) #line :#col \n"
+
+		<- res
+		
