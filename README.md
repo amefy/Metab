@@ -366,7 +366,7 @@ a = new Animal
 #and you can use super with or without parameters
 class Dog : Animal
 	Run (quantity) ->
-		super	#equivalent to 'super(quantiy)'
+		super	#equivalent to 'super(quantity)'
 ```
 ### Increment / Decrement
 ```CoffeeScript
