@@ -1611,22 +1611,23 @@ class ForRange : AstNode
 					end = "#key > #to "	
 			
 
-		stepcode = Step.GetCode 0,tabsin
+		stepcode = Step.GetCode 0,tabsin 	if Step
 
-		try
-			s = parseInt stepcode
-			if s is 1
-				StepType = STEP_TYPES.POSITIVE
-				step = key+'++'
-			else s is -1
-				StepType = STEP_TYPES.NEGATIVE
-				step = key+'--'
-			else
-				StepType STEP_TYPES.NUMBER
-				step = "#key += #stepcode "				
-		catch e			
+		s = parseInt stepcode
+		
+		if s is 1
+			StepType = STEP_TYPES.POSITIVE
+			step = key+'++'
+		else s is -1
+			StepType = STEP_TYPES.NEGATIVE
+			step = key+'--'
+		else isNaN(s)				
 			StepType = STEP_TYPES.UNKNOWN
-			step = "#from <#to ? #key += #Step.GetCode(0,tabsin)  : #key -= #stepcode "
+			step = "#from <#to ? #key += #{Step? Step.GetCode(0,tabsin) : 1} : #key -= #{Step? Step.GetCode(0,tabsin) : 1}"
+		else
+			StepType = STEP_TYPES.NUMBER
+			step = "#key += #stepcode "						
+			
 
 		<- "#Tabs(tabs) for (var #key  = #from  ; #end  ; #step  ) #Body.GetCode(tabs,tabsin) "
 
@@ -1635,13 +1636,13 @@ class ForRange : AstNode
 		Key.SetParent this
 		From.SetParent this
 		To.SetParent this
-		Step.SetParent this
+		Step.SetParent this 	if Step
 		Body.SetParent this
 
 	GetLocalVars ->
 		res = From.GetLocalVars()	
 		res = res.concat To.GetLocalVars()
-		res = res.concat Step.GetLocalVars()
+		res = res.concat Step.GetLocalVars()	if Step
 		res = res.concat Body.GetLocalVars()
 		<- res
 
@@ -1649,10 +1650,10 @@ class ForRange : AstNode
 		Key.TransformAST locals, classNames
 		From.TransformAST locals, classNames
 		To.TransformAST locals, classNames
-		Step.TransformAST locals, classNames
+		Step.TransformAST locals, classNames 	if Step
 		Body.TransformAST locals, classNames
 	
-	GetMappings ->
+	GetMappings ->		
 		from = From.GetMappings()
 		to = To.GetMappings()
 		key = Key.GetMappings()
@@ -1689,7 +1690,7 @@ class ForRange : AstNode
 				###
 			
 
-		stepcode = Step.GetMappings()
+		stepcode = Step.GetMappings() 	if Step
 
 		switch StepType
 			case STEP_TYPES.POSITIVE, STEP_TYPES.NEGATIVE
@@ -1697,7 +1698,7 @@ class ForRange : AstNode
 			case STEP_TYPES.NUMBER
 				step = key.concat [(CloneObj skip3)], stepcode
 			case STEP_TYPES.UNKNOWN
-				step = from.concat [(CloneObj skip1)], to, [(CloneObj skip2)], key, [(CloneObj skip3)], Step.GetMappings(), [(CloneObj skip3)], key, [(CloneObj skip3)], stepcode
+				step = from.concat [(CloneObj skip1)], to, [(CloneObj skip2)], key, [(CloneObj skip3)], (Step? Step.GetMappings() : [(CloneObj skip1)]), [(CloneObj skip3)], key, [(CloneObj skip3)], (Step? Step.GetMappings() : [(CloneObj skip1)])
 
 		Loc.toColumn = 9
 		<- [Loc].concat key, [(CloneObj skip3)], from, [(CloneObj skip3)], end, [(CloneObj skip3)], step, [(CloneObj skip3)], Body.GetMappings()
