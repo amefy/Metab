@@ -296,10 +296,10 @@ for val, key in values	#now, you also have the key (or position in arrays)
 for val, key, count in values	#and now, you also have a counter of loop executions ( 0, 1, 2, ...)
 	b(val)
 	
-for i in [1..10]	#loop from i=1 to i=10
+for i in 1..10		#loop from i=1 to i=10
 	b(i)
 
-for i in [1..<10]	#now, loop from i=1 to i=9
+for i in 1..<10		#now, loop from i=1 to i=9
 	b(i)
 	
 ```
