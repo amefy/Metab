@@ -110,9 +110,10 @@ grammar =
 		o 'Call'
 		o 'AWAIT Exp',										-> <- new Await $2, LocN1
 		o 'Function'
-		o 'Operation'
-		o 'Exp ? Exp : Exp',								-> <- new InlineIf $1, $3, $5, [LocN2,LocN4]
-		o 'Exp ?',											-> <- new Exist $1, LocN2
+		o 'Operation'				
+		o 'Exp ? Exp : Exp',								-> <- new InlineIf $1, $3, $5, [LocN2,LocN4]		
+		o 'Exp ? Exp',										-> <- new Exist $1, $3, LocN2		
+		o 'Exp ?',											-> <- new Exist $1, null, LocN2
 		o '( Exp )',										-> <- new Paren $2, [LocN1,LocN3]
 		o '( TAG )',										-> <- new Paren (new Tag $2,LocN2), [LocN1,LocN3]
 		o 'Exp . Exp',										-> <- new Property $1, $3, LocN2
@@ -328,18 +329,18 @@ grammar =
 		o 'SwitchCases Eol'		
 		o 'DefaultCase Eol'
 		o 'SwitchCases ELSE Block Eol',						-> <- Concat $1, [[$3]]
-		o 'SwitchCases ELSE Eol'#,							-> $1
+		o 'SwitchCases ELSE Eol'
 		o 'SwitchCases Eol DEFAULT Block Eol',				-> <- Concat $1, [[$4]]
-		o 'SwitchCases Eol DEFAULT Eol'#,					-> $1
+		o 'SwitchCases Eol DEFAULT Eol'
 
 	]
 
 	SwitchCases: [
 		o 'SwitchCase'
 		o 'SwitchCases Eol CASE CaseOption Block',			-> <- Concat $1, [[$4,$5]]
-		o 'SwitchCases Eol CASE CaseOption'#,				-> <- $1
+		o 'SwitchCases Eol CASE CaseOption'
 		o 'SwitchCases Eol CaseOption Block',				-> <- Concat $1, [[$3,$4]]
-		o 'SwitchCases Eol CaseOption'#,						-> <- $1
+		o 'SwitchCases Eol CaseOption'
 	]
 
 	SwitchCase: [		
@@ -444,7 +445,8 @@ operators = [
 	['left',			'FINALLY']
 	['left',			'=']
 	['left',			'ASSIGN_OP']
-	['left',			'?',':']
+	['left',			'?']
+	['left',			':']
 	['left',			'LOGICAL']
 	['left',			'COMPARE']		
 	['left',			'BINARY_OP']

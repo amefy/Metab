@@ -236,6 +236,7 @@ class Document : AstNode
 								unless ClassNames.Classes[k]
 									ClassNames.Classes[k] = v
 						cbp()
+					, cep
 
 		Promise.all(importings).then(->
 			TransformAST()	
@@ -2322,64 +2323,86 @@ Funcs.Boolean = Boolean
 
 
 class Exist : AstNode
-	Exp
-	init (exp,loc) ->
+	Exp,ExpOpt
+	init (exp,expOpt,loc) ->
 		super loc		
 		Exp = exp
+		ExpOpt = expOpt
 	
 	GetCode (tabs,tabsin) ->
 		Loc.fromColumn = tabs
 
-		if Exp.Type is 'Tag'
-			<- Tabs(tabs)+"(typeof #Exp.GetCode(0,tabsin)  !== 'undefined' && #Exp.GetCode(0,tabsin)  !== null)"
+		if Exp.Type is 'Tag' and not Exp.IsClassStatic and not Exp.IsClassProp			
+			if ExpOpt
+				<- Tabs(tabs)+"(typeof #Exp.GetCode(0,tabsin)  !== 'undefined' && #Exp.GetCode(0,tabsin)  !== null) ? #Exp.GetCode(0,tabsin)  : #ExpOpt.GetCode(0,tabsin) "
+			else
+				<- Tabs(tabs)+"(typeof #Exp.GetCode(0,tabsin)  !== 'undefined' && #Exp.GetCode(0,tabsin)  !== null)"
 		else
-			<- Tabs(tabs)+"#Exp.GetCode(0,tabsin)  != null"	
+			if ExpOpt
+				<- Tabs(tabs)+"((__v=#Exp.GetCode(0,tabsin) ) != null)? __v : #ExpOpt.GetCode(0,tabsin) "	
+			else
+				<- Tabs(tabs)+"#Exp.GetCode(0,tabsin)  != null"	
 		
 	SetParent (parent) ->
 		super
 
 		Exp.SetParent this
+		ExpOpt.SetParent this 	if ExpOpt
 
 	TransformAST (locals,classNames) ->
 		Exp.TransformAST locals, classNames
+		ExpOpt.TransformAST locals, classNames 	if ExpOpt
+
+	GetLocalVars ->
+		res = Exp.GetLocalVars()
+
+		if ExpOpt
+			res = res.concat ExpOpt.GetLocalVars()
+			res.push '__v'
+
+		<- res
 
 	GetMappings ->
-		if Exp.Type is 'Tag'
-			pre = CloneObj Loc
-			pre.toColumn = 8
-
-			exp = Exp.GetMappings()
-
-			mid = CloneObj Loc
-			mid.toColumn = 20
-
-			post = Loc
-			post.toColumn = 10
-
-			<- [pre].concat exp, mid, exp, post
+		if Exp.Type is 'Tag' and not Exp.IsClassStatic and not Exp.IsClassProp			
+			if ExpOpt
+				Loc.toColumn = 8
+				exp = Exp.GetMappings()
+				med = CloneObj Loc
+				med.fromColumn = 0
+				med.toColumn = 20
+				semi = CloneObj med
+				semi.toColumn = 3
+				end = CloneObj med
+				end.toColumn = 13
+				<- [Loc].concat exp, [med], (CloneObj exp), [end], (CloneObj exp), [semi], ExpOpt.GetMappings()
+				#<- Tabs(tabs)+"(typeof #Exp.GetCode(0,tabsin)  !== 'undefined' && #Exp.GetCode(0,tabsin)  !== null) ? #Exp.GetCode(0,tabsin)  : #ExpOpt.GetCode(0,tabsin) "
+			else
+				Loc.toColumn = 8
+				exp = Exp.GetMappings()
+				med = CloneObj Loc
+				med.fromColumn = 0
+				med.toColumn = 20
+				end = CloneObj med
+				end.toColumn = 10
+				<- [Loc].concat exp, [med], (CloneObj exp), [end]
+				#<- Tabs(tabs)+"(typeof #Exp.GetCode(0,tabsin)  !== 'undefined' && #Exp.GetCode(0,tabsin)  !== null)"
 		else
-			Loc.toColumn = 8
-			<- Exp.GetMappings().concat [Loc]
-
-	GetMappings ->
-		if Exp.Type is 'Tag'
-			Loc.toColumn = 8
-			exp = Exp.GetMappings()
-			med = CloneObj Loc
-			med.fromColumn = 0
-			med.toColumn = 20
-			end = CloneObj med
-			end.toColumn = 10
-			<- [Loc].concat exp, [med], (CloneObj exp), [end]
-			#<- Tabs(tabs)+"(typeof #Exp.GetCode(0,tabsin)  !== 'undefined' && #Exp.GetCode(0,tabsin)  !== null)"
-		else				
-			end = CloneObj Loc
-			end.fromColumn = 0
-			end.toColumn = 3				
-			exp = Exp.GetMappings()
-			exp[0].fromColumn += Loc.fromColumn
-			<- exp.concat [end]
-			#<- Tabs(tabs)+"#Exp.GetCode(0,tabsin)  != null"
+			if ExpOpt
+				end = CloneObj Loc
+				end.fromColumn = 0
+				end.toColumn = 18
+				exp = Exp.GetMappings()				
+				exp[0].fromColumn += Loc.fromColumn + 6
+				<- exp.concat [end], ExpOpt.GetMappings()
+				#<- Tabs(tabs)+"((__v=#Exp.GetCode(0,tabsin) ) != null)? __v : #ExpOpt.GetCode(0,tabsin) "	
+			else
+				end = CloneObj Loc
+				end.fromColumn = 0
+				end.toColumn = 3
+				exp = Exp.GetMappings()
+				exp[0].fromColumn += Loc.fromColumn
+				<- exp.concat [end]
+				#<- Tabs(tabs)+"#Exp.GetCode(0,tabsin)  != null"
 
 Funcs.Exist = Exist
 
