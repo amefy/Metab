@@ -314,10 +314,10 @@ grammar =
 	]
 
 	LoopRange: [
-		o 'TAG IN [ Exp .. Exp ]',							-> <- [(new Tag $1,LocN1),yes,$4,$6]
-		o 'TAG IN [ Exp ... Exp ]',							-> <- [(new Tag $1,LocN1),no ,$4,$6]
-		o '[ Exp .. Exp ]',									-> <- [null,yes,$2,$4]
-		o '[ Exp ... Exp ]',								-> <- [null,no,$2,$4]
+		o 'TAG IN Exp .. Exp',								-> <- [(new Tag $1,LocN1),yes,$3,$5]
+		o 'TAG IN Exp ..< Exp',								-> <- [(new Tag $1,LocN1),no ,$3,$5]
+		o 'Exp .. Exp',										-> <- [null,yes,$1,$3]
+		o 'Exp ..< Exp',									-> <- [null,no,$1,$3]
 	]
 
 	Switch: [

@@ -96,7 +96,7 @@ grammar =
 		o '?'
 		o '.'
 		o '..'
-		o '...'
+		o '..<'
 		o 'EOL'
 		o ';'
 		o 'CALLIN'

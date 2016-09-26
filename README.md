@@ -131,6 +131,7 @@ Metab language has born to write minimum code and do the maximum work possible. 
 The first rule to write less, like Python and Coffescript languages, is that Metab use tabulated code to remove braces and save hundreds of lines.
 To use class members, you do not need to write 'this' all the time :)
 With Metab language, you can call asynchronous functions like synchronous and your code become more linear. Thanks to this, you can import asynchronous modules like synchronous.
+Metab uses '.metab' extension for metab code and '.mson' for json files in metab language style
 
 ### Comments
 ```CoffeeScript
@@ -298,7 +299,7 @@ for val, key, count in values	#and now, you also have a counter of loop executio
 for i in [1..10]	#loop from i=1 to i=10
 	b(i)
 
-for i in [1...10]	#now, loop from i=1 to i=9
+for i in [1..<10]	#now, loop from i=1 to i=9
 	b(i)
 	
 ```
