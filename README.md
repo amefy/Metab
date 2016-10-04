@@ -125,7 +125,7 @@ Metab.Import('./test',()=>{
 ## Language
 
 ### Introduction
-Metab language has born to write minimum code and do the maximum work possible. Once the code is minimalized it becomes clearer and you can work faster.
+Metab language was born to write minimum code and do the maximum work possible. Once the code is minimalized it becomes clearer and you can work faster.
 
 ### Basic concepts
 The first rule to write less, like Python and Coffescript languages, is that Metab use tabulated code to remove braces and save hundreds of lines.
