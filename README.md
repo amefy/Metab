@@ -242,7 +242,7 @@ export class Dog : Animal
 
 #### If / Else
 ```CoffeeScript
-if a > 1	#you not need to use parenthesis
+if a > 1	#you do not need to use parenthesis
 	b()
 else
 	c()
