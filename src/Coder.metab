@@ -791,7 +791,8 @@ class Tag : AstNode
 						IsClassStatic = yes				
 						_ClassName = p.ClassName
 					else
-						IsClassProp = yes
+						unless classNames.Function and classNames.Function.HasParamRecursive Value
+							IsClassProp = yes
 
 Funcs.Tag = Tag
 
@@ -1019,6 +1020,22 @@ class Function : AstNode
 			#<- Tabs(tabs)+getter+"#{ (Name? ? Name.GetCode(0,tabsin) : '') }#head #Body.GetCode(tabs,tabsin) "
 
 		<- res
+
+	HasParam (name) ->
+		if Params
+			for p in Params
+				<- yes 	if p.Name is name
+		<- no
+
+	HasParamRecursive (name) ->
+		<- yes 	if HasParam name
+		
+		p = Parent
+		while p		
+			if p instanceof Function				
+				<- yes 	if p.HasParamRecursive name
+			p = p.Parent
+		<- no
 
 
 Funcs.Function = Function

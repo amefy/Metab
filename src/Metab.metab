@@ -156,6 +156,10 @@ class Metab
 		r = null
 		eval code
 
+	static CompileAndRun (code) ->
+		Compile code,'inline.metab', Run, (e) ->
+			console.error e
+
 	static FileExist (file,cb,ce) ->
 		fs.stat file, (err,stats) ->
 			if err

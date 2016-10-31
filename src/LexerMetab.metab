@@ -5,6 +5,8 @@
 
 class LexerMetab : Lexer
 	OpenStrings
+	OpenStringsDouble
+	IndentType = '\t'
 
 	ParseRules (str, rules) ->
 		res = super
@@ -32,12 +34,14 @@ class LexerMetab : Lexer
 		
 
 	Parse (ss) ->
+		#FindIndentType ss
 		OpenStrings = []
+		OpenStringsDouble = []
 		<- ParseRules ss, ->			
 			<- 	Spaces() or Indents() or Strings() or Comments() or RegularExpression() or Return() or MethodDefine() or Comma() or Groups() or Number() or If() or Booleans() or Reserved() or IncDecOperator() or LogicalOperator() or CompareOperator() or Assignament() or BinaryOperator() or ArithmeticPrecOperator() or ArithmeticOperator() or this.AddTokenWord(this.s, '..<', '..<') or this.AddTokenWord(this.s, '..', '..') or Indexes() or Tag() or Eol() or Await() or this.AddTokenChar(this.s, '?', '?') or this.AddTokenWord(this.s, '::', '::') or this.AddTokenChar(this.s, ':', ':') or this.AddTokenChar(this.s, ';', ';') or this.AddTokenChar(this.s, '!', '!') or this.AddTokenChar(this.s, '~', '~') or this.AddTokenChar(this.s, '}', '}') or this.AddTokenChar(this.s, '[', '[') or this.AddTokenChar(this.s, ']', ']') or this.AddTokenChar(this.s, '{', '{')					
 			
 	Spaces ->
-		if this.LastTokenType isnt 'INDENT' and this.LastTokenType isnt 'EOL' and (OpenStrings.length<=0 or OpenStrings[OpenStrings.length-1] isnt '#')
+		if this.LastTokenType isnt 'INDENT' and this.LastTokenType isnt 'EOL' and (OpenStrings.length<=0 or OpenStrings[OpenStrings.length-1] isnt '#') and (OpenStringsDouble.length<=0 or OpenStringsDouble[OpenStringsDouble.length-1] isnt '#')
 			r = this.ParseExp this.s, /^[ \t]+/			
 			if r isnt null					
 				if this.LastTokenType in PRECALL
@@ -86,6 +90,68 @@ class LexerMetab : Lexer
 	Strings ->
 		if OpenStrings.length>0				
 			if OpenStrings[OpenStrings.length-1] is '#'				
+				r = this.ParseExp this.s, /^\s(?:[^\\'#]|\\[\s\S])*('|#[$a-zA-Z_]|#\{)/		# \t...   #{ | #TAG | '
+			else				
+				r = this.ParseExp this.s, /^}(?:[^\\'#]|\\[\s\S])*('|#[$a-zA-Z_]|#\{)/		# }...   #{ | #TAG | '
+
+			if r isnt null								
+				if r[r.length-1] is "'"
+					s="'"+r.substr 1
+					OpenStrings.pop()
+				else						
+					s="'"+r.substr(1, r.length-3)+"'"
+
+				if this.Tokens[this.Tokens.length-1][0] is 'CALLIN'
+					this.Tokens.pop()
+
+				this.AddToken {
+					T:')'	
+					V:')'
+				}
+				this.AddToken {
+					T:'+'	
+					V:'+'
+				}
+				this.AddToken {
+					T: 'STRING'
+					V: JoinStrings(s)
+				}
+
+				if r[r.length-1] isnt "'"
+					this.AddToken {
+						T:'+'				
+						V:'+'
+					}
+					this.AddToken {
+						T:'('
+						V:'('
+					}
+					OpenStrings[OpenStrings.length-1] = r[r.length-1] is '{' ? '#{' : '#'				
+
+				<- r.length+(r[r.length-1] is '{' or r[r.length-1] is "'" ? 0 : -1)
+
+		else			
+			r = this.ParseExp this.s, /^'(?:[^\\'#]|\\[\s\S])*\#([$a-zA-Z_]|\{)/		# '...#  TAG|{
+			if r isnt null						
+				#LOG r
+				s=r.substr(0, r.length-2)+"'"
+				this.AddToken {
+					T: 'STRING'
+					V: JoinStrings(s)
+				}
+				this.AddToken {
+					T:'+'
+					V:'+'
+				}
+				this.AddToken {
+					T:'('
+					V:'('
+				}
+				OpenStrings.push '#'+( r[r.length-1] is '{' ? '{' : '')
+				<- r.length+(r[r.length-1] is '{' ? 0 : -1)
+
+		if OpenStringsDouble.length>0				
+			if OpenStringsDouble[OpenStringsDouble.length-1] is '#'				
 				r = this.ParseExp this.s, /^\s(?:[^\\"#]|\\[\s\S])*("|#[$a-zA-Z_]|#\{)/		# \t...   #{ | #TAG | "				
 			else				
 				r = this.ParseExp this.s, /^}(?:[^\\"#]|\\[\s\S])*("|#[$a-zA-Z_]|#\{)/		# }...   #{ | #TAG | "
@@ -93,7 +159,7 @@ class LexerMetab : Lexer
 			if r isnt null								
 				if r[r.length-1] is '"'		
 					s='"'+r.substr 1
-					OpenStrings.pop()
+					OpenStringsDouble.pop()
 				else						
 					s='"'+r.substr(1, r.length-3)+'"'
 
@@ -122,7 +188,7 @@ class LexerMetab : Lexer
 						T:'('
 						V:'('
 					}
-					OpenStrings[OpenStrings.length-1] = r[r.length-1] is '{' ? '#{' : '#'				
+					OpenStringsDouble[OpenStringsDouble.length-1] = r[r.length-1] is '{' ? '#{' : '#'				
 
 				<- r.length+(r[r.length-1] is '{' or r[r.length-1] is '"' ? 0 : -1)
 
@@ -143,10 +209,11 @@ class LexerMetab : Lexer
 					T:'('
 					V:'('
 				}
-				OpenStrings.push '#'+( r[r.length-1] is '{' ? '{' : '')
+				OpenStringsDouble.push '#'+( r[r.length-1] is '{' ? '{' : '')
 				<- r.length+(r[r.length-1] is '{' ? 0 : -1)
 
-		r = this.ParseExp this.s, /^'(?:[^\\']|\\[\s\S])*'/		
+		#r = this.ParseExp this.s, /^'(?:[^\\']|\\[\s\S])*'/		
+		r = this.ParseExp this.s, /^'(?:[^\\'#]|\\[\s\S]|\#(?!\{))*'/	
 		if r isnt null			
 			this.AddToken {
 				T: 'STRING'
