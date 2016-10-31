@@ -125,10 +125,10 @@ Metab.Import('./test',()=>{
 ## Language
 
 ### Introduction
-Metab language has born to write minimum code and do the maximum work possible. Once the code is minimalized it becomes clearer and you can work faster.
+Metab language was born to write minimum code and do the maximum work possible. Once the code is minimalized it becomes clearer and you can work faster.
 
 ### Basic concepts
-The first rule to write less, like Python and Coffescript languages, is that Metab use tabulated code to remove braces and save hundreds of lines.
+The first rule to write less, like Python and Coffescript languages, is that Metab uses tabulated code to remove braces and save hundreds of lines.
 To use class members, you do not need to write 'this' all the time :)
 With Metab language, you can call asynchronous functions like synchronous and your code become more linear. Thanks to this, you can import asynchronous modules like synchronous.
 Metab uses '.metab' extension for metab code and '.mson' for json files in metab language style
@@ -242,7 +242,7 @@ export class Dog : Animal
 
 #### If / Else
 ```CoffeeScript
-if a > 1	#you not need to use parenthesis
+if a > 1	#you do not need to use parenthesis
 	b()
 else
 	c()
