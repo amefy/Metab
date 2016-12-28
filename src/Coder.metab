@@ -2540,3 +2540,136 @@ class LocalVar : AstNode
 			<- this.Tabs(tabs)+"var "+Names+";"
 
 Funcs.LocalVar = LocalVar		
+
+class Hon : AstNode
+	TypeNode,Values,Childs,TabsIn
+	init (type,values,childs,loc) ->		
+		super loc
+		TypeNode = type
+		Values = values
+		Childs = childs
+		
+	GetCode (tabs,tabsin) ->
+		TabsIn = [tabs,tabsin]
+
+		if Values
+			valsCode = ','
+			for e,,i in Values
+				valsCode +=', '	if i>0
+				valsCode += '\n'+Tabs(tabsin+1)+e[0].GetCode(0,tabsin)+': '+e[1].GetCode(0,tabsin+1)
+		else
+			valsCode = ''
+
+		if Childs
+			childsCode = ',\n' + Tabs(tabsin+1) + '_c: [\n'
+			for e,,i in Childs
+				if i > 0
+					childsCode += ',\n'
+
+				childsCode += e.GetCode(tabsin+2,tabsin+2)
+			childsCode += '\n' + Tabs(tabsin + 1) + ']'
+		else
+			childsCode = ''
+
+
+		<- Tabs(tabs) + "{\n" + Tabs(tabsin+1) + "_t: " + TypeNode.GetCode(0,tabsin) + valsCode + childsCode + "\n" + Tabs(tabsin) + '}'
+
+	SetParent (parent) ->
+		super	
+
+		TypeNode.SetParent this
+
+		if Values
+			for e in Values
+				e[0].SetParent this
+				e[1].SetParent this
+
+		this.SetChildParents Childs 	if Childs
+
+	GetLocalVars ->
+		res = []
+
+		res = res.concat TypeNode.GetLocalVars()
+
+		if Values
+			for e in Values
+				res = res.concat e[0].GetLocalVars()
+				res = res.concat e[1].GetLocalVars()
+
+		if Childs
+			for e in Childs
+				res = res.concat e.GetLocalVars()
+			
+		<- res
+
+	TransformAST (locals,classNames) ->
+		TypeNode.TransformAST locals, classNames
+
+		if Values
+			for e in Values
+				e[0].TransformAST locals, classNames
+				if e[0].TypeNode is 'Tag'
+					e[0].IsClassStatic = no
+					e[0].IsClassProp = no
+				e[1].TransformAST locals, classNames
+
+		if Childs
+			for e in Childs
+				e.Loc = Loc
+				e.TransformAST locals, classNames				
+
+	GetMappings ->						
+		vals = []
+
+		if Values
+			for e in Values			
+				com = CloneObj Loc
+				com.toColumn = 2
+				vals = vals.concat com	
+					
+				start = CloneObj Loc
+				start.fromLine = 1
+				start.fromColumn = TabsIn[1] + 1
+				start.toColumn = 0
+				col = CloneObj Loc
+				col.toColumn = 2
+				vals = vals.concat start, e[0].GetMappings(), col, e[1].GetMappings()
+				
+		childs = []
+
+		if Childs
+			arr = CloneObj Loc
+			arr.fromLine++
+			arr.toLine++
+			childs.push arr
+
+			for c,,i in Childs
+				if i > 0
+					com = CloneObj Loc
+					com.fromLine++
+					#com.toColumn = 2
+					childs = childs.concat com	
+				childs = childs.concat c.GetMappings()
+
+			endArr = CloneObj Loc
+			endArr.fromLine++
+			childs.push endArr
+		
+		type = TypeNode.GetMappings()
+		#type.fromLine++
+		#type.fromColumn += 3
+		end = CloneObj Loc
+		end.fromLine += Childs? 1 : 1
+		end.fromColumn = TabsIn[1]
+		t = CloneObj Loc
+		t.fromColumn = TabsIn[1]
+		t.toColumn = 5
+		#end.fromColumn +=TabsIn[1]			
+		start = CloneObj Loc
+		start.fromColumn += TabsIn[0]		
+		#Loc.toColumn = 5# + TabsIn[1]
+		start.toLine++		
+
+		<- [start].concat t, type, vals, childs, end
+
+Funcs.Hon = Hon

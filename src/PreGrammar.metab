@@ -148,6 +148,7 @@ grammar =
 		o 'SET'
 		o 'NOT'
 		o 'AS'
+		o 'HON'
 		o '::',						-> <- [['.','.',this._$],['TAG','prototype',this._$]]
 		o 'Group',					-> <- $1		
 	]

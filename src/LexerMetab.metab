@@ -561,7 +561,7 @@ class LexerMetab : Lexer
 		'NaN','Infinity','typeof','instanceof','in','by',
 		'enum',
 		'public','private','protected','get','set','not'
-		'as'
+		'as', 'hon'
 	]
 
 	const ASSIGNAMENTS 				= ['=','-=', '+=', '/=', '*=', '%=', '|=', '&=', '<<=', '>>>=', '>>=', '^=','**=']

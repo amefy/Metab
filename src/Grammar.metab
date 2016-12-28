@@ -99,6 +99,9 @@ grammar =
 
 	Exp: [		
 		o 'Object'		
+		o 'Hon',											(->
+			<- $1
+		), {prec: 'LOW'}
 		o 'TAG',											(-> 
 			<- new Tag $1,Loc
 		), {prec: 'LOW'}
@@ -175,8 +178,9 @@ grammar =
 		o 'FuncArgs , TAG = FuncDefValue',					-> <- Concat $1,[new FunctionParam $3,$5,[LocN2,LocN3,LocN4]]		
 	]
 
-	FuncDefValue : [
+	FuncDefValue: [
 		o 'Object'
+		o 'Hon'
 		o 'Value'
 		o '- Value',										-> <- new Operation (new Op $1,LocN1), $2
 		o '+ Value',										-> <- new Operation (new Op $1,LocN1), $2
@@ -411,16 +415,65 @@ grammar =
 		o 'NUMBER',											-> <- [[(new Number $1, LocN1),(new Number $1, LocN1)]]
 		o 'ObjectElements , STRING',						-> <- Concat $1, [[(new String $3,LocN3),(new String $3,LocN3)]]
 		o 'ObjectElements , TAG',							-> <- Concat $1, [[(new Tag $3,LocN3),(new Tag $3,LocN3)]]
-		o 'ObjectElements , NUMBER',						-> <- Concat $1, [[(new Number $3,LocN3),(new Number $3,LocN3)]]
-		o 'STRING : Exp',									-> <- [[(new String $1, LocN1),$3]]
-		o 'TAG : Exp',										-> <- [[(new Tag $1, LocN1),$3]]
-		o 'NUMBER : Exp',									-> <- [[(new Number $1, LocN1),$3]]
+		o 'ObjectElements , NUMBER',						-> <- Concat $1, [[(new Number $3,LocN3),(new Number $3,LocN3)]]		
+		o 'ObjectPair'
 		o 'ObjectElements , STRING : Exp',					-> <- Concat $1, [[(new String $3,LocN3),$5]]
 		o 'ObjectElements , TAG : Exp',						-> <- Concat $1, [[(new Tag $3,LocN3),$5]]
 		o 'ObjectElements , NUMBER : Exp',					-> <- Concat $1, [[(new Number $3,LocN3),$5]]
 		o 'ObjectElements ,'
 	]
 
+	ObjectPair: [
+		o 'STRING : Exp',									-> <- [[(new String $1, LocN1),$3]]
+		o 'TAG : Exp',										-> <- [[(new Tag $1, LocN1),$3]]
+		o 'NUMBER : Exp',									-> <- [[(new Number $1, LocN1),$3]]
+	]
+
+	# hon 'row'
+	# hon 3
+	# hon fff
+	# hon 'ffse' k:v
+	# hon 'aaa' k:v, k2:v2
+	# hon 'bbb'
+	# 		ccc
+
+	Hon: [
+		o 'HON TAG', 										-> <- new Hon (new String '"'+$2+'"', LocN2), null, null, Loc
+		o 'HON TAG ( HonVars )', 							-> <- new Hon (new String '"'+$2+'"', LocN2), $4, null, Loc
+		o 'HON TAG HonChilds',								-> <- new Hon (new String '"'+$2+'"', LocN2), null, $3, Loc
+		o 'HON TAG ( HonVars ) HonChilds',					-> <- new Hon (new String '"'+$2+'"', LocN2), $4, $6, Loc
+
+		o 'HON STRING', 									-> <- new Hon (new String $2, LocN2), null, null, Loc
+		o 'HON STRING ( HonVars )', 						-> <- new Hon (new String $2, LocN2), $4, null, Loc
+		o 'HON STRING HonChilds',							-> <- new Hon (new String $2, LocN2), null, $3, Loc
+		o 'HON STRING ( HonVars ) HonChilds',				-> <- new Hon (new String $2, LocN2), $4, $6, Loc
+	]
+
+	HonVars: [
+		o 'ObjectPair'
+		o 'HonVars , ObjectPair',							-> <- Concat $1, $3
+	]
+
+	HonChilds: [
+		o 'INDENT HonElements OUTDENT',						-> <- $2		
+	]
+
+	HonElements: [	
+		o 'HonElement Eol',									-> <- [$1]
+		o 'HonElements HonElement Eol',						-> <- Concat $1, $2
+	]
+
+	HonElement: [
+		o 'TAG',											-> <- new Hon (new String '"'+$1+'"', LocN1), null, null, Loc
+		o 'TAG ( HonVars )',								-> <- new Hon (new String '"'+$1+'"', LocN1), $3, null, Loc
+		o 'TAG HonChilds',									-> <- new Hon (new String '"'+$1+'"', LocN1), null, $2, Loc
+		o 'TAG ( HonVars ) HonChilds',						-> <- new Hon (new String '"'+$1+'"', LocN1), $3, $5, Loc
+
+		o 'STRING',											-> <- new Hon (new String $1, LocN1), null, null, Loc
+		o 'STRING ( HonVars )',								-> <- new Hon (new String $1, LocN1), $3, null, Loc
+		o 'STRING HonChilds',								-> <- new Hon (new String $1, LocN1), null, $2, Loc
+		o 'STRING ( HonVars ) HonChilds',					-> <- new Hon (new String $1, LocN1), $3, $5, Loc
+	]
 
 	Eol: [
 		o ';'
@@ -439,7 +492,8 @@ grammar =
 
 
 operators = [	
-	['left',			'LOW']	
+	['left',			'LOW']		
+	['left',			'HON']
 	['left',			'INLINE']
 	['right',			'IF','ELSE']		
 	['left',			'FINALLY']
@@ -456,7 +510,7 @@ operators = [
 	['nonassoc',		'+-','~','DELETE','VOID','NOT','TYPEOF']
 	['left',			'INSTANCEOF']	
 	['left',			'.']
-	['left',			',']
+	['left',			',']	
 	['left',			'[',']']
 	['left',			'AWAIT']
 	['left',			'NEW']	
