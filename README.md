@@ -355,6 +355,32 @@ mix =
 			5
 		]
 
+#and you can create special objects for use to convert to html or other complex hiearchy 
+html = hon body
+	div class:'c1', style:'color:red'
+		label text:'hello'
+		label text:'world'
+#generate this:
+html = {
+	_t: "body",
+	_c: [
+		{
+			_t: "div",
+			style: 'color:red', 
+			width: 'auto',
+			_c: [
+				{
+					_t: "label",
+					text: 'hello'
+				},
+				{
+					_t: "label",
+					text: 'world'
+				}
+			]
+		}
+	]
+}
 ```
 ### This / New / Super
 ```CoffeeScript
