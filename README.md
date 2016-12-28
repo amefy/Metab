@@ -330,7 +330,7 @@ catch err
 finally
 	b()
 ```
-### Array / Objects
+### Array / Object
 ```CoffeeScript
 #you can define objects and arrays like in Javascript
 obj = {a:'b',c:'d'}
